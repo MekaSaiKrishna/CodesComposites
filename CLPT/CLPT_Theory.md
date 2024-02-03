@@ -8,16 +8,13 @@ The following kinematic assumptions that are made in this theory:
 2) straight lines normal to the mid-surface remain normal to the mid-surface after deformation
 3) the thickness of the plate does not change during a deformation.
 
+ Checkout the [Wikipedia Link](https://en.wikipedia.org/wiki/Kirchhoff%E2%80%93Love_plate_theory) about Kirchoff-Love Theory for more details and derivations
+
 | Euler-Bernoulli Theory      | Kirchoff-Love Theory |
 | ----------- | ----------- |
 | Header      | Title       |
 | Paragraph   | Text        |
 
-
-<!-- Kirchoff Plate Theory Schematic --> 
-<p align="center">
-  <img width="240" src="https://github.com/MekaSaiKrishna/CodesComposites/assets/93347557/c5e84442-fe5e-448d-bbd8-cf9c842b2668">
-</p>
 
 ___
 $$\begin{equation}
@@ -39,5 +36,10 @@ C_{13} & C_{23} & C_{33} \\
 \end{equation}$$
 
 ___
-<iframe src="interactive_plot.html" width="800" height="600"></iframe>
+
+<p align="center">
+  <img width="240" src="https://github.com/MekaSaiKrishna/CodesComposites/blob/main/CLPT/interactive_plot.html">
+</p>
+
+<iframe src="https://github.com/MekaSaiKrishna/CodesComposites/blob/main/CLPT/interactive_plot.html" width="800" height="600"></iframe>
 
