@@ -54,7 +54,7 @@ C     DEFINED VARIABLES
       REAL*8::N(3,2)
       REAL*8::Ecr_MAX(2),Ecr_OLD(2)
       REAL*8::Ecr(2),dEcr(2)
-      REAL*8::scr_old,scr
+      REAL*8::scr_old(2),scr(2)
 
       REAL*8::Dcocr(2,2)
       REAL*8::Dcr(2,2)
@@ -181,9 +181,17 @@ C     OUTPUT: 'T' matrix i.e. orientation of crack to compute N
 
 
       IF (FI_MAX .GE. 1.0D0) THEN
-        STATEV(1) = 1.0D0  ! Set the failure flag
-        ! Optional: Print a message to the .log file for debugging
-        ! WRITE(7,*) 'Failure initiated at Element:', NOEL
+      STATEV(1) = 1.0D0  ! Set the failure flag
+      ! Optional: Print a message to the .log file for debugging
+      ! WRITE(7,*) 'Failure initiated at Element:', NOEL
+C       statev(14) = FI_MAX*XT
+      
+      !Compute the transformation matri
+      call getN(STATEV(5),STATEV(6),N)
+      
+C       scr_old = matmul(transpose(N),SIG) 
+      statev(14:15) = matmul(transpose(N),SIG) 
+      
       END IF
 
 
@@ -202,6 +210,7 @@ C C ****************  END FAILURE CRITERIA WRAPPER ***********************
 
       ! local crack stress
       statev(13) = FI_MAX*XT !initialization to STRENGTH
+
       end if
 
 C     STEP-6: If Crack Exists
@@ -211,16 +220,12 @@ C     STEP-6: If Crack Exists
       Ecr_OLD  = statev(9:10)  ! OLD LOCAL CRACK STRAIN 
       dEcr     = statev(11:12) ! CURRENT INCREMENT IN LOCAL CRACK STRAIN  
 
-      !Compute the transformation matrix
-      call getN(STATEV(5),STATEV(6),N)
-
 
 C     STEP-7: Compute Dcr matrix
-      scr_old = statev(14)
+      scr_old = statev(14:15)
 
       CALL calcDcr(Ecr_OLD,Ecr_MAX,GIc,sigcr0,Leff,nu,Dcr,scr_old,scr,dEcr)
-      
-      statev(14) = scr
+      statev(14:15) = scr
 
 
 C     STEP-8: Determine local crack strain (increment) consistently
@@ -234,12 +239,10 @@ C     STEP-8: Determine local crack strain (increment) consistently
       STATEV(9:10)  = Ecr_OLD
       STATEV(11:12) = dEcr
 
-      STATEV(15)   = Dcr(1,1)
+C       STATEV(15)   = Dcr(1,1)
 
 C     STEP-9: Compute Dcocr i.e. Jacobian
       CALL calcDcocr(Dco,Dcr,N,Dcocr)
-
-      ! DSIGMA = Dcocr*DSTRAN
 
       !calculate the stress
       SIG = SIG + matmul(Dcocr,DSTRAN)
@@ -337,7 +340,7 @@ C-----------------------------------------------------------------------
       real*8::NT_Dco(2,3)
       real*8::Y(2,2),invY(2,2)
 
-      real*8::scr_old,scr 
+      real*8::scr_old(2),scr(2) 
 
       NT = transpose(N)
 
@@ -380,7 +383,7 @@ C-----------------------------------------------------------------------
       real*8::term,sigcr0_r
       real*8::Ecr_TEMP(2),Dcr_min
 
-      real*8::scr_old,scr,dEcr(3)
+      real*8::scr_old(2),scr(2),dEcr(2)
       real*8::scr_max !local crack stress at max local crack strain
 
       sigcr0_r = sigcr0*5D-5
@@ -411,7 +414,7 @@ C-----------------------------------------------------------------------
 
       Dcr(2,2) = Dcr(1,1)*term*1.0D-5
 
-      scr = scr_old + Dcr(1,1)*dEcr(1)
+      scr = scr_old + matmul(Dcr,dEcr)
       return
       end
 
