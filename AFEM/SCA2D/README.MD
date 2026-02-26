@@ -2,7 +2,7 @@
 
 An Abaqus/Standard UMAT implementation of the **Incremental Smeared Crack Approach (SCA)** for modeling crack initiation and propagation in 2D isotropic materials under plane stress conditions. This formulation avoids the need for a Newton-Raphson iterative scheme by using an incremental (AFEM) approach.
 
-**Last Updated:** February 25, 2026
+**Last Updated:** February 26, 2026
 **Contact:** meka1@purdue.edu
 
 ---
@@ -252,3 +252,121 @@ Currently, violating the Bazant size-effect limit causes an immediate hard abort
 ### 10. Raise `NMAX` or Make It Dynamic in LU Decomposition
 
 The `ludcmp` and `qludcmp` routines have `NMAX=10` hardcoded. While the current SCA2D code only inverts 2x2 matrices, this library is a general utility. If reused for larger systems (e.g., extending to 3D or multi-crack models), it would silently produce wrong results for matrices larger than 10x10. Using allocatable arrays or at minimum raising `NMAX` with a bounds check would prevent this silent failure.
+
+---
+
+## Implemented Changes (v2 Files)
+
+All 10 smart changes have been implemented as **new files** without modifying the originals. The v2 code uses Fortran 90 free-format modules and can be compiled alongside or independently of the original files.
+
+### New Files
+
+#### `sca2d_constants.f90` - Constants & Types Module
+
+**Implements:** Smart Changes #5, #8
+
+Provides a single-source-of-truth module for all numerical constants and the state variable derived type:
+
+- **Named constants** (`RESIDUAL_STRESS_FRACTION`, `SHEAR_RETENTION_FACTOR`, `INITIAL_CRACK_STRAIN`, `POST_FAILURE_STIFFNESS`) replace all magic numbers scattered through the original formulation
+- **Validation constants** (`N_STATEV_REQUIRED`, `N_PROPS_REQUIRED`, `NTENS_PLANE_STRESS`) centralize Abaqus setup requirements
+- **`sca2d_state_t` derived type** replaces raw `STATEV(i)` indexing with named fields (e.g., `state%crack_flag`, `state%ecr_max`, `state%crack_normal`)
+- **`unpack_state` / `pack_state`** routines convert between the flat `STATEV` array (required by Abaqus) and the structured type
+
+#### `matrix_utils.f90` - Linear Algebra Module
+
+**Implements:** Smart Changes #1, #4, #10
+
+Cleaned-up linear algebra utilities:
+
+- **`inverse_2x2`** (Smart Change #1): Direct analytical formula for 2x2 matrix inverse using `det = ad - bc`. Eliminates the overhead of LU decomposition, pivoting, and back-substitution for the 2x2 systems that appear in `compute_crack_strain` and `compute_Dcocr`
+- **`matrix_inverse_general`** (Smart Change #10): General LU-based inverse with `allocatable` arrays instead of the fixed `NMAX=10` limit. Works for any matrix size without silent overflow
+- **`solve_lin_sys_lu`** (Smart Change #4): Double-precision only. The four quad-precision duplicates (`qmatrixInverse`, `qSolveLinSysLU`, `qludcmp`, `qlubksb`) have been removed since they are never called in the SCA2D code
+- **`ludcmp_v2` / `lubksb_v2`**: Internal helpers with allocatable `vv(:)` array (Smart Change #10) and explicit `INTENT` on all arguments (Smart Change #8)
+
+#### `formulation_AFEM2D_v2.f90` - Improved SCA Formulation Module
+
+**Implements:** Smart Changes #2, #3, #5, #7, #8, #9
+
+The core constitutive model, restructured as a Fortran 90 module (`sca2d_formulation`):
+
+- **`sca2diso_v2`**: Main subroutine with the following improvements:
+  - *Smart Change #2*: `compute_stiffness_2d_ps` is called once and its result `Dco` is passed to all helper routines that need it
+  - *Smart Change #3*: The products `NT_Dco = N^T * Dco` (2x3) and `NT_Dco_N = N^T * Dco * N` (2x2) are computed once after the transformation matrix `N` is built, then passed to both `compute_crack_strain` and `compute_Dcocr`, eliminating redundant matrix multiplications
+  - *Smart Change #7*: `compute_Dcr` is called exactly once in the post-crack phase. The original code called `calcDcr` in `sca2diso` (line 221) and then again inside `calcEcr` (line 346) with identical inputs. The new `compute_crack_strain` receives `Dcr` as an input parameter and does not recompute it
+  - *Smart Change #8*: State variables are unpacked into a `sca2d_state_t` derived type at the start and packed back at the end (e.g., `state%crack_flag` instead of `STATEV(1)`)
+  - *Smart Change #9*: The Bazant limit check now writes diagnostics to Abaqus unit 7 (`.msg` file), includes the element number `NOEL`, and sets `PNEWDT = 0.25` before aborting
+
+- **All helper subroutines** have explicit `INTENT(IN/OUT/INOUT)` on every argument (Smart Change #8):
+  - `compute_stiffness_2d_ps` - Elastic stiffness matrix
+  - `compute_N` - Transformation matrix
+  - `compute_Dcr` - Crack stiffness (uses named constants from `sca2d_constants`)
+  - `compute_crack_strain` - Crack strain increment (uses `inverse_2x2`, receives pre-computed products)
+  - `compute_Dcocr` - Degraded tangent stiffness (uses `inverse_2x2`, receives pre-computed products)
+  - `mysprind_v2` / `myExit_v2` - Abaqus utility wrappers
+
+#### `main_SCA2D_inc_v2.f90` - Improved UMAT Wrapper
+
+**Implements:** Smart Changes #6, #8
+
+The Abaqus UMAT entry point with comprehensive input validation:
+
+- **Element type check** (Smart Change #6): Verifies `NTENS == 3` to confirm plane stress elements are used. Writes a clear message naming the expected element type (CPS4) if wrong
+- **Property count check** (Smart Change #6): Verifies `NPROPS >= 5` and lists the required properties (E, nu, GIc, XT, INDEX) if insufficient
+- **State variable count check** (Smart Change #6): Verifies `NSTATV >= 15` and tells the user the required `*Depvar` value
+- **Physical validity checks** (Smart Change #6): Validates `E > 0`, `0 < nu < 0.5`, `GIc > 0`, `XT > 0` with specific error messages for each
+- All error messages are written to Abaqus unit 7 (`.msg` file) for standard Abaqus log visibility
+- **Module imports** (Smart Change #8): Uses `sca2d_constants` and `sca2d_formulation` modules for explicit interfaces, replacing the `include` file mechanism
+
+### Compilation Order
+
+The v2 files must be compiled in dependency order:
+
+```
+1. sca2d_constants.f90          (no dependencies)
+2. matrix_utils.f90             (no dependencies)
+3. formulation_AFEM2D_v2.f90    (uses sca2d_constants, matrix_utils)
+4. main_SCA2D_inc_v2.f90        (uses sca2d_constants, sca2d_formulation)
+```
+
+For Abaqus, compile with:
+```bash
+abaqus make job=analysis user=main_SCA2D_inc_v2.f90 \
+  -I sca2d_constants.f90 -I matrix_utils.f90 -I formulation_AFEM2D_v2.f90
+```
+
+Or concatenate into a single file in the order above.
+
+### v2 Call Hierarchy
+
+```
+Abaqus/Standard
+  └── UMAT()                              [main_SCA2D_inc_v2.f90]
+        ├── Input validation (6 checks)
+        └── sca2diso_v2()                  [formulation_AFEM2D_v2.f90]
+              ├── unpack_state()           [sca2d_constants.f90]
+              ├── compute_stiffness_2d_ps()  (once per call)
+              ├── mysprind_v2() → SPRIND()   [Abaqus utility]
+              ├── compute_N()
+              ├── NT_Dco, NT_Dco_N           (pre-computed once)
+              ├── compute_Dcr()              (called once, not twice)
+              ├── compute_crack_strain()
+              │     └── inverse_2x2()        [matrix_utils.f90]
+              ├── compute_Dcocr()
+              │     └── inverse_2x2()        [matrix_utils.f90]
+              └── pack_state()             [sca2d_constants.f90]
+```
+
+### Smart Change Traceability
+
+| Smart Change | Files Implementing It |
+|---|---|
+| #1 Analytical 2x2 inverse | `matrix_utils.f90`, `formulation_AFEM2D_v2.f90` |
+| #2 Stiffness computed once | `formulation_AFEM2D_v2.f90` |
+| #3 Pre-computed matrix products | `formulation_AFEM2D_v2.f90` |
+| #4 No quad-precision duplicates | `matrix_utils.f90` |
+| #5 Named constants | `sca2d_constants.f90`, `formulation_AFEM2D_v2.f90` |
+| #6 Input validation | `main_SCA2D_inc_v2.f90` |
+| #7 No redundant calcDcr | `formulation_AFEM2D_v2.f90` |
+| #8 Modules, INTENT, derived types | All v2 files |
+| #9 Improved Bazant check | `formulation_AFEM2D_v2.f90` |
+| #10 Dynamic LU arrays | `matrix_utils.f90` |
