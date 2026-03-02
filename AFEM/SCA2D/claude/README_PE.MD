@@ -219,13 +219,13 @@ The normal and shear components are **decoupled** ($D_{cr,12} = D_{cr,21} = 0$).
 
 where:
 
-$$\sigma_{cr}^{MAX} = \sigma_{cr0} - \frac{\sigma_{cr0}^2}{2\,G_{Ic}/L_{eff}}\;\varepsilon_{cr,n}^{MAX}
+$$\sigma_{cr}^{MAX} = \sigma_{cr0} - \frac{\sigma_{cr0}^2}{2G_{Ic}/L_{eff}}\varepsilon_{cr,n}^{MAX}
 \quad \text{(traction at current crack strain maximum)}$$
 
-$$\sigma_{cr0,r} = 5\times10^{-5}\;\sigma_{cr0}
+$$\sigma_{cr0,r} = 5\times10^{-5}\times\sigma_{cr0}
 \quad \text{(residual traction for numerical stability)}$$
 
-$$\varepsilon_{cr,n}^{temp} = \max\!\left(|\varepsilon_{cr,n}^{OLD}|,\;|\varepsilon_{cr,n}^{MAX}|\right)$$
+$$\varepsilon_{cr,n}^{temp} = \max\left(|\varepsilon_{cr,n}^{OLD}|,|\varepsilon_{cr,n}^{MAX}|\right)$$
 
 **Shear component:**
 
@@ -239,19 +239,21 @@ $$D_{cr,tt} = D_{cr,nn} \times \frac{1}{2(1+\nu)} \times 10^{-8} \approx 0$$
 
 **Stress continuity** at the crack face (traction continuity):
 
-$$\mathbf{N}^T\,\mathbf{D}_{co}\bigl(\Delta\boldsymbol{\varepsilon} - \mathbf{N}\,\Delta\boldsymbol{\varepsilon}_{cr}\bigr)
-= \mathbf{D}_{cr}\,\Delta\boldsymbol{\varepsilon}_{cr}$$
+$$\mathbf{N}^T\mathbf{D}_{co}\bigl(\Delta\boldsymbol{\varepsilon} - \mathbf{N}\Delta\boldsymbol{\varepsilon}_{cr}\bigr)
+= \mathbf{D}_{cr}\Delta\varepsilon_{cr}$$
 
 Rearranging to solve for $\Delta\boldsymbol{\varepsilon}_{cr}$:
 
 $$\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)\Delta\boldsymbol{\varepsilon}_{cr}
-= \mathbf{N}^T\mathbf{D}_{co}\,\Delta\boldsymbol{\varepsilon}$$
+= \mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}$$
 
-$$\boxed{\Delta\boldsymbol{\varepsilon}_{cr} =
+$$
+\boxed{\Delta\boldsymbol{\varepsilon}_{cr} =
 \underbrace{\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)^{-1}}_{\mathbf{Y}^{-1}}
-\mathbf{N}^T\mathbf{D}_{co}\,\Delta\boldsymbol{\varepsilon}}$$
+\mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}}
+$$
 
-where $\mathbf{Y} = \mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N} \in \mathbb{R}^{2\times2}$
+where $Y = D_{cr} + N^TD_{co}N \in \mathbb{R}^{2\times2}$
 is inverted via LU decomposition (`matrixInverse` from `matrix_inverse.for`).
 
 ---
