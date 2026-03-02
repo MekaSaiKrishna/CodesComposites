@@ -266,14 +266,10 @@ increment gives the **cracked-continuum consistent tangent**:
 $$\Delta\boldsymbol{\sigma} = \mathbf{D}_{cocr}\Delta\boldsymbol{\varepsilon}$$
 
 $$
-D_{cocr} = D_{co}
-- D_{co}\N
-\underbrace{\left(D_{cr} + N^TD_{co}N\right)^{-1}}_{Y^{-1}}
-\N^TD_{co}
+D_{cocr} = D_{co} - D_{co}\N \underbrace{\left(D_{cr} + N^TD_{co}N\right)^{-1}}_{Y^{-1}}\N^TD_{co}
 $$
 
-This is returned in `DDSDDE` for the ABAQUS Newton–Raphson global solver.
-It reduces to $D_{co}$ when there is no crack and approaches a rank-deficient matrix
+This is returned in `DDSDDE` for the ABAQUS Newton–Raphson global solver. It reduces to $D_{co}$ when there is no crack and approaches a rank-deficient matrix
 as the crack stiffness $D_{cr} \to 0$.
 
 ---
