@@ -139,13 +139,15 @@ $$
 
 to the corresponding contribution in global Voigt strain:
 
-$$\mathbf{N} =
+$$
+\mathbf{N} =
 \begin{bmatrix}
   c^2  & -cs       \\
-  s^2  & \phantom{-}cs   \\
+  s^2  & cs   \\
   0    & 0         \\
   2sc  & c^2 - s^2
-\end{bmatrix} \in \mathbb{R}^{4\times 2}$$
+\end{bmatrix} \in \mathbb{R}^{4\times 2}
+$$
 
 Its transpose $\mathbf{N}^T$ recovers local crack strains from global strains:
 
