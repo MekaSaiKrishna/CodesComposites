@@ -204,7 +204,7 @@ smaller element size.
 
 ### 6. Crack Constitutive Matrix D\_cr
 
-The 2×2 crack stiffness matrix $$\mathbf{D}_{cr}$$ (in local crack coordinates) governs the
+The 2×2 crack stiffness matrix $$\mathbf{D_{cr}}$$ (in local crack coordinates) governs the
 traction–crack-strain relationship: $$\Delta\mathbf{\sigma}_{cr} = \mathbf{D}_{cr}\Delta\mathbf{\varepsilon}_{cr}$$.
 
 The normal and shear components are **decoupled** ($D_{cr,12} = D_{cr,21} = 0$).
