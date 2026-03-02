@@ -38,10 +38,10 @@ include 'formulation_AFEM2D_PE.for'
 
 | Index | Symbol   | Description                        | Units    |
 |-------|----------|------------------------------------|----------|
-| 1     | E        | Young's modulus                    | Pa       |
+| 1     | E        | Young's modulus                    | MPa      |
 | 2     | ν        | Poisson's ratio                    | —        |
-| 3     | G\_Ic    | Mode I fracture toughness          | J/m²     |
-| 4     | X\_T     | Tensile (& compressive) strength   | Pa       |
+| 3     | G\_Ic    | Mode I fracture toughness          | N/mm     |
+| 4     | X\_T     | Tensile (& compressive) strength   | MPa      |
 | 5     | INDEX    | Failure criteria selector (0 or 1) | —        |
 
 ---
