@@ -253,7 +253,7 @@ $$
 \mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}}
 $$
 
-where $Y = D_{cr} + N^TD_{co}N \in \mathbb{R}^{2\times2}$
+where $Y = D_{cr} + N^TD_{co}N \, \in \mathbb{R}^{2\times2}$
 is inverted via LU decomposition (`matrixInverse` from `matrix_inverse.for`).
 
 ---
@@ -263,16 +263,18 @@ is inverted via LU decomposition (`matrixInverse` from `matrix_inverse.for`).
 Substituting the expression for $\Delta\boldsymbol{\varepsilon}_{cr}$ back into the stress
 increment gives the **cracked-continuum consistent tangent**:
 
-$$\Delta\boldsymbol{\sigma} = \mathbf{D}_{cocr}\,\Delta\boldsymbol{\varepsilon}$$
+$$\Delta\boldsymbol{\sigma} = \mathbf{D}_{cocr}\Delta\boldsymbol{\varepsilon}$$
 
-$$\boxed{\mathbf{D}_{cocr} = \mathbf{D}_{co}
-- \mathbf{D}_{co}\,\mathbf{N}
-\underbrace{\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)^{-1}}_{\mathbf{Y}^{-1}}
-\mathbf{N}^T\mathbf{D}_{co}}$$
+$$
+D_{cocr} = D_{co}
+- D_{co}\N
+\underbrace{\left(D_{cr} + N^TD_{co}N\right)^{-1}}_{Y^{-1}}
+\N^TD_{co}
+$$
 
 This is returned in `DDSDDE` for the ABAQUS Newton–Raphson global solver.
-It reduces to $\mathbf{D}_{co}$ when there is no crack and approaches a rank-deficient matrix
-as the crack stiffness $\mathbf{D}_{cr} \to \mathbf{0}$.
+It reduces to $D_{co}$ when there is no crack and approaches a rank-deficient matrix
+as the crack stiffness $D_{cr} \to 0$.
 
 ---
 
