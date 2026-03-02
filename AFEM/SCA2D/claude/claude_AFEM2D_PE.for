@@ -30,7 +30,7 @@ C***********************************************************************
 
 C     --- ABAQUS standard arguments ---
       INTEGER     :: NTENS, NDI, NSHR, NSTATV, NPROPS, NOEL
-      REAL*8      :: DFGRD1(3,3)            ! FIX: was INTEGER in original
+      REAL*8      :: DFGRD1(3,3)            
       REAL*8      :: stepTIME, totalTIME, DT, PNEWDT, L, Leff
       REAL*8      :: PROPS(NPROPS)
       REAL*8      :: SIG(NTENS), EPS(NTENS), DSTRAN(NTENS)
@@ -41,7 +41,7 @@ C     --- ABAQUS standard arguments ---
 
 C     --- Local variables ---
       INTEGER     :: INDEX, I, J, K1
-      INTEGER     :: ZONE                   ! zone flag (1=elastic,2=loading,3=unloading,4=failed)
+C       INTEGER     :: ZONE                   ! zone flag (1=elastic,2=loading,3=unloading,4=failed)
       REAL*8      :: E, nu, GIc, XT, G
       REAL*8      :: sigcr0, taucr0, sigcr0_r, BL
       REAL*8      :: isCRACKED, MODE
@@ -235,11 +235,11 @@ C                Normal crack strain must remain non-negative
          STATEV(9:10)  = Ecr_OLD   ! updated inside calcEcr_PE to Ecr
          STATEV(11:12) = dEcr
 
-C        FIX #9: Recompute D_cr with the UPDATED dEcr and scr_old
-C                so that scr is consistent with the final crack strain
-         CALL calcDcr_PE(Ecr_OLD, Ecr_MAX, GIc, sigcr0, taucr0, Leff,
-     1                   nu, Dcr, STATEV(14:15), scr, dEcr)
-         STATEV(14:15) = scr
+C C        FIX #9: Recompute D_cr with the UPDATED dEcr and scr_old
+C C                so that scr is consistent with the final crack strain
+C          CALL calcDcr_PE(Ecr_OLD, Ecr_MAX, GIc, sigcr0, taucr0, Leff,
+C      1                   nu, Dcr, STATEV(14:15), scr, dEcr)
+C          STATEV(14:15) = scr
 
 C        STEP 9: Compute cracked tangent D_cocr
          CALL calcDcocr_PE(Dco, Dcr, N, Dcocr, PNEWDT)

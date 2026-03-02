@@ -26,9 +26,13 @@ C                  Newton-Raphson Method
 
 C-----------------------------------------------------------------------
 C     INCREMENTAL FORMULATION
-      call  sca2diso(NTENS, NDI, NSHR, DFGRD1, NSTATV, NPROPS, NOEL, 
-     1     TIME(1), TIME(2), DTIME, PNEWDT, CELENT, PROPS, STRAN, DSTRAN, STRESS,  
-     2     STATEV, DDSDDE, DTEMP,1)  
+C       call  sca2diso(NTENS, NDI, NSHR, DFGRD1, NSTATV, NPROPS, NOEL, 
+C      1     TIME(1), TIME(2), DTIME, PNEWDT, CELENT, PROPS, STRAN, DSTRAN, STRESS,  
+C      2     STATEV, DDSDDE, DTEMP,1)  
+
+      call sca2diso_PE(NTENS, NDI, NSHR, DFGRD1, NSTATV, NPROPS,
+     1      NOEL, TIME(1), TIME(2), DTIME, PNEWDT, CELENT, PROPS, STRAN,
+     2      DSTRAN, STRESS, STATEV, DDSDDE, DTEMP, 1)
 
 C-----------------------------------------------------------------------
       RETURN
@@ -36,12 +40,12 @@ C-----------------------------------------------------------------------
 
 
 !     COMMENT OUT THE FORTRAN FILE THAT YOU ARE NOT USING
-!     i.e. if you are using Plane Stress Element then comment out 
-!     'formulation_AFEM2D_PE'
+!     i.e. if you are using Plane Strain Element then comment out 
+!     'formulation_AFEM2D_PS'
 
 C     MAX PRINCIPAL STRESS FAILURE CRTIERIA
-      include 'formulation_AFEM2D_PS.for'
+C       include 'formulation_AFEM2D_PS.for'
 
 C     MAX PRINCIPAL STRAIN FAILURE CRTIERIA
-      include 'formulation_AFEM2D_PE.for'
+      include 'claude_AFEM2D_PE.for'
       include 'matrix_inverse.for'
