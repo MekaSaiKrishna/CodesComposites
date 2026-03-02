@@ -132,9 +132,11 @@ eigenvector.
 Let the crack unit normal be $\mathbf{n} = [c,\;s]^T$ with $c = \cos\theta$, $s = \sin\theta$.
 
 The **N matrix** (4×2) maps local crack strain increments
+
 $$
 \Delta\boldsymbol{\varepsilon}_{cr} = [\Delta\varepsilon_{cr,n},\;\Delta\gamma_{cr,t}]^T
 $$
+
 to the corresponding contribution in global Voigt strain:
 
 $$\mathbf{N} =
