@@ -151,11 +151,17 @@ $$
 
 Its transpose $\mathbf{N}^T$ recovers local crack strains from global strains:
 
-$$\Delta\boldsymbol{\varepsilon}_{cr} = \mathbf{N}^T\,\Delta\boldsymbol{\varepsilon}_{global}$$
+$$\Delta\boldsymbol{\varepsilon}_{cr} = \mathbf{N}^T\Delta\boldsymbol{\varepsilon}_{global}$$
 
 **Verification:** for a horizontal crack ($\theta = 0$, $c=1$, $s=0$):
 
-$$\mathbf{N} = \begin{bmatrix}1&0\\0&0\\0&0\\0&1\end{bmatrix},
+$$\mathbf{N} = 
+\begin{bmatrix}
+1&0\\
+0&0\\
+0&0\\
+0&1
+\end{bmatrix},
 \quad \mathbf{N}^T\{\varepsilon\} = [\varepsilon_{xx},\;\gamma_{xy}]^T \;\checkmark$$
 
 ---
