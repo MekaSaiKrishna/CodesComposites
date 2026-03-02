@@ -170,23 +170,23 @@ $$\mathbf{N} =
 
 The normal crack traction evolves with crack opening strain following a **linear softening law**:
 
-$$\sigma_{cr}(\varepsilon_{cr,n}) = \sigma_{cr0} - \frac{\sigma_{cr0}^{\,2}}{2\,G_{Ic}/L_{eff}}\,\varepsilon_{cr,n}$$
+$$\sigma_{cr}(\varepsilon_{cr,n}) = \sigma_{cr0} - \frac{\sigma_{cr0}^{2}}{2G_{Ic}/L_{eff}}\varepsilon_{cr,n}$$
 
 where:
 
 | Symbol         | Meaning                                          |
 |----------------|--------------------------------------------------|
 | $\sigma_{cr0}$ | Peak crack traction (= normal stress at failure) |
-| $G_{Ic}$       | Mode I fracture toughness [J/m²]                 |
+| $G_{Ic}$       | Mode I fracture toughness [N/mm]                 |
 | $L_{eff}$      | Effective element size (crack band width)        |
 
 **Ultimate crack strain** (zero traction):
 
-$$\varepsilon_{cr,n}^{u} = \frac{2\,G_{Ic}}{L_{eff}\;\sigma_{cr0}}$$
+$$\varepsilon_{cr,n}^{u} = \frac{2G_{Ic}}{L_{eff}\sigma_{cr0}}$$
 
 **Fracture energy equivalence** (area under the traction–separation curve × element size = G\_Ic):
 
-$$\frac{1}{2}\,\sigma_{cr0}\,\varepsilon_{cr,n}^{u}\,L_{eff} = G_{Ic} \;\checkmark$$
+$$\frac{1}{2}\sigma_{cr0}\varepsilon_{cr,n}^{u}L_{eff} = G_{Ic} \;\checkmark$$
 
 ---
 
@@ -195,7 +195,7 @@ $$\frac{1}{2}\,\sigma_{cr0}\,\varepsilon_{cr,n}^{u}\,L_{eff} = G_{Ic} \;\checkma
 To prevent snap-back (negative energy dissipation) and ensure mesh-size-independent fracture
 energy, the element size must satisfy:
 
-$$\boxed{L_{eff} \leq \frac{2\,G_{Ic}\,E}{\sigma_{cr0}^{\,2}}}$$
+$$\boxed{L_{eff} \leq \frac{2G_{Ic}E}{\sigma_{cr0}^{2}}}$$
 
 If this condition is violated, the analysis aborts with a diagnostic message recommending a
 smaller element size.
@@ -204,8 +204,8 @@ smaller element size.
 
 ### 6. Crack Constitutive Matrix D\_cr
 
-The 2×2 crack stiffness matrix $\mathbf{D}_{cr}$ (in local crack coordinates) governs the
-traction–crack-strain relationship: $\Delta\boldsymbol{\sigma}_{cr} = \mathbf{D}_{cr}\,\Delta\boldsymbol{\varepsilon}_{cr}$.
+The 2×2 crack stiffness matrix $$\mathbf{D}_{cr}$$ (in local crack coordinates) governs the
+traction–crack-strain relationship: $$\Delta\mathbf{\sigma}_{cr} = \mathbf{D}_{cr}\Delta\mathbf{\varepsilon}_{cr}$$.
 
 The normal and shear components are **decoupled** ($D_{cr,12} = D_{cr,21} = 0$).
 
