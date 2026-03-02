@@ -76,13 +76,15 @@ include 'formulation_AFEM2D_PE.for'
 
 For an isotropic material under plane strain the 4×4 stiffness matrix is:
 
-$$\mathbf{D}_{co} = \frac{E}{(1+\nu)(1-2\nu)}
+$$
+\mathbf{D}_{co} = \frac{E}{(1+\nu)(1-2\nu)}
 \begin{bmatrix}
   1-\nu & \nu   & \nu   & 0 \\
   \nu   & 1-\nu & \nu   & 0 \\
   \nu   & \nu   & 1-\nu & 0 \\
   0     & 0     & 0     & \dfrac{1-2\nu}{2}
-\end{bmatrix}$$
+\end{bmatrix}
+$$
 
 where the stress and strain vectors follow Voigt notation:
 
