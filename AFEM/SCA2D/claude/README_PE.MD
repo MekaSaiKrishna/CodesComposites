@@ -93,22 +93,24 @@ $$\{\sigma\} = [\sigma_{xx},\;\sigma_{yy},\;\sigma_{zz},\;\tau_{xy}]^T, \qquad
 
 The incremental linear-elastic stress update is:
 
-$$\Delta\{\sigma\} = \mathbf{D}_{co}\,\Delta\{\varepsilon\}$$
+$$\Delta\{\sigma\} = \mathbf{D}_{co}\Delta\{\varepsilon\}$$
 
 ---
 
 ### 2. Failure Criterion — Maximum Principal Stress
 
 Principal stresses $\sigma_1 \geq \sigma_2 \geq \sigma_3$ (and their eigenvectors) are
-obtained from the ABAQUS built-in routine `SPRIND`.
+obtained from the ABAQUS built-in routine `SPRIND`. Point to note, when SPRIND is used, the order in which $\sigma_1, \sigma_2, \sigma_3$
+are generated are random and don't follow the above inequality. Hence we need to manually check using a FOR loop which index corresponds to
+which principal stress value.
 
 **Tensile failure index:**
 
-$$\text{FI}_T = \frac{\sigma_{\max}}{X_T}, \qquad \sigma_{\max} = \max(\sigma_1,\,\sigma_2,\,\sigma_3)$$
+$$\text{FI}_T = \frac{\sigma_{\max}}{X_T}, \qquad \sigma_{\max} = \max(\sigma_1,\,\sigma_2,\sigma_3)$$
 
 **Compressive failure index:**
 
-$$\text{FI}_C = \frac{|\sigma_{\min}|}{X_T}, \qquad \sigma_{\min} = \min(\sigma_1,\,\sigma_2,\,\sigma_3)$$
+$$\text{FI}_C = \frac{|\sigma_{\min}|}{X_T}, \qquad \sigma_{\min} = \min(\sigma_1,\,\sigma_2,\sigma_3)$$
 
 **Overall failure index and dominant mode:**
 
