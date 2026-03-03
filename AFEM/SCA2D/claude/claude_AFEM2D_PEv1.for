@@ -18,11 +18,20 @@ C     !       and the computed Ecr(1) exceeds Ecr_MAX(1). Compute the
 C     !       fractional step alpha at which Ecr(1) = Ecr_MAX(1) and set
 C     !       PNEWDT = alpha * 0.85 so ABAQUS restarts with a smaller step.
 C     !
-C     !  OS-3 [sca2diso_PE, post-peak block]:
-C     !       Detect first-closure transition — when Ecr_OLD = Ecr_MAX
-C     !       (on softening envelope) and dEcr(1) < 0 (crack closing).
-C     !       Set PNEWDT = min(PNEWDT, 0.5) to reduce the traction jump
-C     !       at the envelope/secant branch boundary.
+C     !  OS-3 [REMOVED]:
+C     !       The first-closure PNEWDT=0.5 was removed because it caused an
+C     !       infinite ABAQUS step-cut loop: ABAQUS resets STATEV on restart,
+C     !       so Ecr_OLD_save = Ecr_MAX_save on every retry → OS-3 fires again
+C     !       → exponential step reduction → ABAQUS gives up. Fix-GAP below
+C     !       eliminates the underlying traction discontinuity, making OS-3
+C     !       redundant.
+C     !
+C     !  FIX-GAP [sca2diso_PE, after STATEV(9:10) update]:
+C     !       Re-enable Fix #9: call calcDcr_PE a second time using the
+C     !       UPDATED Ecr_OLD (= Ecr_new). With OS-1 total form in the secant
+C     !       branch: scr(1) = D_sec * Ecr_new → STATEV(14) is now consistent
+C     !       with STATEV(9), eliminating the one-increment lag that produced
+C     !       the gap in the σ_cr vs ε_cr plot during unload/reload.
 C     !
 C     !  OS-4 [sca2diso_PE, interpenetration clamp]:
 C     !       Fix wrong formula for dEcr when clamping Ecr(1) to zero.
@@ -69,35 +78,32 @@ C     --- Local variables ---
       REAL*8      :: scr_old(2), scr(2)
       REAL*8      :: Dcocr(NTENS,NTENS)
       REAL*8      :: Dcr(2,2)
-
-C     !<OS-3> Save snapshot of crack history BEFORE calcEcr_PE is called
-C             so we can detect the loading-reversal transition afterwards.
-      REAL*8      :: Ecr_MAX_save(2), Ecr_OLD_save(2)   !<OS-3>
+      REAL*8      :: scr_start(2)  ! snapshot of scr_old for Fix-GAP second Dcr call
 
 C     --- Numerical constants ---
       REAL*8, PARAMETER :: ZERO    = 0.0D0
       REAL*8, PARAMETER :: ONE     = 1.0D0
       REAL*8, PARAMETER :: TWO     = 2.0D0
-      REAL*8, PARAMETER :: TINY_   = 1.0D-8
-      REAL*8, PARAMETER :: RES_    = 1.0D-5
-      REAL*8, PARAMETER :: FI_CRIT = 0.99D0
+      REAL*8, PARAMETER :: TINY_   = 1.0D-8 ! seed value for crack strains
+      REAL*8, PARAMETER :: RES_    = 1.0D-5 ! residual stiffness after full failure
+      REAL*8, PARAMETER :: FI_CRIT = 1.0D0 ! failure index threshold
 
 C***********************************************************************
 C     READ MATERIAL PROPERTIES
 C***********************************************************************
-      E      = PROPS(1)
-      nu     = PROPS(2)
-      GIc    = PROPS(3)
-      XT     = PROPS(4)
-      INDEX  = INT(PROPS(5))
+      E      = PROPS(1)      ! Young's modulus
+      nu     = PROPS(2)      ! Poisson's ratio
+      GIc    = PROPS(3)      ! Mode I fracture toughness
+      XT     = PROPS(4)      ! Tensile (and compressive) strength
+      INDEX  = INT(PROPS(5)) ! Failure criteria index
 
-      G    = E / (TWO*(ONE + nu))
-      Leff = ONE*L
+      G      = E / (TWO*(ONE + nu))
+      Leff   = ONE*L !for linear elements (CPE4)
 
-      MODE   = STATEV(2)
-      sigcr0 = STATEV(16)
-      taucr0 = STATEV(17)
-      STATEV(3) = L
+      MODE      = STATEV(2)
+      sigcr0    = STATEV(16)
+      taucr0    = STATEV(17)
+      STATEV(3) = Leff
 
 C***********************************************************************
 C     STEP 1: Elastic stiffness matrix D_co
@@ -131,19 +137,24 @@ C     PRE-PEAK BLOCK  (no crack yet)
 C=======================================================================
       IF (STATEV(1) .LT. 0.5D0) THEN
 
+C        Initialise local crack stresses (not yet initiated)
          STATEV(16) = ZERO
          STATEV(17) = ZERO
          STATEV(4)  = ZERO
 
+C        --- Linear elastic stress update ---
          SIG    = SIG + MATMUL(Dco, DSTRAN)
          DDSDDE = Dco
 
+C        --- Principal stress computation ---
          CALL mysprind_PE(SIG, PRINS, T, 1, 3, 1)
 
-         FI_T   = ZERO
-         FI_C   = ZERO
-         FI_MAX = ZERO
+C        Failure indices
+         FI_T   = ZERO ! Tension Failure Index
+         FI_C   = ZERO ! Compression Failure Index
+         FI_MAX = ZERO ! Maximum Failure Index
 
+C        Tensile check: most positive principal stress
          PMAX = MAX(PRINS(1), PRINS(2), PRINS(3))
          IF (PMAX .GT. ZERO) FI_T = PMAX / XT
          J_MAX = 1
@@ -151,6 +162,7 @@ C=======================================================================
             IF (PRINS(I) .EQ. PMAX) J_MAX = I
          END DO
 
+C        Compressive check: most negative (magnitude) principal stress
          PMIN = MIN(PRINS(1), PRINS(2), PRINS(3))
          J_MIN = 1
          DO I = 1, 3
@@ -158,33 +170,38 @@ C=======================================================================
          END DO
          IF (PMIN .LT. ZERO) FI_C = ABS(PMIN) / XT
 
+C        Dominant mode
          IF (FI_T .GE. FI_C) THEN
-            MODE   =  ONE
+            MODE   =  ONE           ! tensile
             FI_MAX = FI_T
             J_FAIL = DBLE(J_MAX)
          ELSE
-            MODE   = -ONE
+            MODE   = -ONE           ! compressive
             FI_MAX = FI_C
             J_FAIL = DBLE(J_MIN)
          END IF
 
+C        Store failure mode and crack orientation
          STATEV(2) = MODE
          STATEV(4) = FI_MAX
-         STATEV(5) = T(1, INT(J_FAIL))
-         STATEV(6) = T(2, INT(J_FAIL))
+         STATEV(5) = T(1, INT(J_FAIL)) ! cos(theta)
+         STATEV(6) = T(2, INT(J_FAIL)) ! sin(theta)
 
 !---->   IF FAILURE CRITERIA IS SATISFIED
          IF (FI_MAX .GE. FI_CRIT) THEN
-            STATEV(1) = ONE
+            STATEV(1) = ONE ! crack flag ON
 
             CALL getN_PE(STATEV(5), STATEV(6), N)
 
+C           Local crack stress at initiation (stored as sigcr0, taucr0)
             STATEV(16:17) = MATMUL(TRANSPOSE(N), SIG)
             STATEV(13)    = STATEV(4) * XT
 
+C           scr_old = local crack stress vector
             STATEV(14) = STATEV(16)
             STATEV(15) = STATEV(17)
 
+C           Seed crack strains (small positive value to avoid 0)
             STATEV(7)  = TINY_
             STATEV(8)  = TINY_
             STATEV(9)  = TINY_
@@ -195,6 +212,8 @@ C=======================================================================
 
       END IF    ! end pre-peak block
 
+C     Re-read sigcr0 / taucr0 in case they were just written above
+C     to store the final value when peak occurs
       sigcr0 = STATEV(16)
       taucr0 = STATEV(17)
 
@@ -203,15 +222,12 @@ C     POST-PEAK BLOCK  (crack is active)
 C=======================================================================
       IF (STATEV(1) .GE. ONE) THEN
 
+C        Retrieve crack history
          Ecr_MAX  = STATEV(7:8)
          Ecr_OLD  = STATEV(9:10)
          dEcr     = STATEV(11:12)
          scr_old  = STATEV(14:15)
-
-C        !<OS-3> Snapshot before calling calcEcr_PE so we can detect
-C                the envelope→unloading transition afterwards.
-         Ecr_MAX_save = Ecr_MAX    !<OS-3>
-         Ecr_OLD_save = Ecr_OLD    !<OS-3>
+         scr_start = scr_old   ! snapshot for Fix-GAP second Dcr re-evaluation
 
          CALL getN_PE(STATEV(5), STATEV(6), N)
 
@@ -225,19 +241,7 @@ C        STEP 8: Compute crack strain increment, update Ecr history
      1                   GIc, sigcr0, taucr0, Leff, nu, scr_old, scr,
      2                   PNEWDT)
 
-C        !<OS-3> Detect the first-closure transition:
-C                If the crack was ON the softening envelope at the start of
-C                this step (Ecr_OLD_save = Ecr_MAX_save) and has now moved
-C                BELOW Ecr_MAX (dEcr(1) < 0 means crack is closing), then
-C                the next increment will switch from slope_soft → secant.
-C                Request a smaller step to reduce the traction discontinuity.
-         IF ((Ecr_OLD_save(1) .GE. Ecr_MAX_save(1)) .AND.          !<OS-3>
-     1       (dEcr(1) .LT. ZERO)) THEN                              !<OS-3>
-            PNEWDT = MIN(PNEWDT, 0.5D0)                             !<OS-3>
-C           Note: PNEWDT < 1 only takes effect if ABAQUS/Standard
-C           automatic incrementation is enabled. The current increment
-C           is still completed; the next will start smaller.          !<OS-3>
-         END IF                                                       !<OS-3>
+
 
 C        FIX #6 (corrected by OS-4): Prevent crack interpenetration.
 C        Clamp normal crack strain to zero for tensile-mode cracks.
@@ -258,6 +262,24 @@ C                Correct         : dEcr(1) = ZERO - STATEV(9)
          STATEV(7:8)   = Ecr_MAX
          STATEV(9:10)  = Ecr_OLD
          STATEV(11:12) = dEcr
+
+C        FIX-GAP (Fix #9 re-enabled): Re-compute D_cr and scr using the
+C        UPDATED Ecr_OLD (= Ecr_new, now in STATEV(9:10)) and the NEW dEcr.
+C
+C        Root cause of the gap: the first calcDcr_PE call above (Step 7)
+C        used Ecr_OLD_old. With OS-1 total form: scr(1) = D_sec * Ecr_OLD_old.
+C        But STATEV(9) stores Ecr_OLD_new → one-increment lag → plotted point
+C        (STATEV(9), STATEV(14)) falls off the secant line → visible gap.
+C
+C        Fix: call calcDcr_PE again with Ecr_OLD_new.  Now:
+C          Secant branch (OS-1): scr(1) = D_sec * Ecr_OLD_new
+C                                → STATEV(14) consistent with STATEV(9) ✓
+C          Softening branch    : scr(1) = scr_start(1) + slope_soft * dEcr_new
+C                                → scr at Ecr_new on the softening curve ✓
+C        Also refreshes Dcr for the STEP 9 tangent computation.
+         CALL calcDcr_PE(Ecr_OLD, Ecr_MAX, GIc, sigcr0, taucr0, Leff,
+     1                   nu, Dcr, scr_start, scr, dEcr)
+         STATEV(14:15) = scr
 
 C        STEP 9: Compute cracked tangent D_cocr
          CALL calcDcocr_PE(Dco, Dcr, N, Dcocr, PNEWDT)
@@ -401,7 +423,7 @@ C             AFTER dEcr has been computed.
       IF (ABS(detY) .LT. SING_TOL*(ABS(Y(1,1))*ABS(Y(2,2)) + 1.0D0))
      1THEN
          WRITE(*,'(A,1PG12.4)') ' WARNING: Y near-singular, det=', detY
-         PNEWDT = 0.5D0
+         PNEWDT = MIN(PNEWDT, 0.5D0)
          RETURN
       END IF
 
@@ -424,16 +446,20 @@ C             A safety factor of 0.85 prevents repeated boundary
 C             oscillation.
       IF (in_secant_zone) THEN                                     !<OS-2>
          IF (dEcr(1) .GT. 0.0D0) THEN                             !<OS-2>
-            IF ((Ecr_OLD_entry(1) + dEcr(1)) .GT.                 !<OS-2>
-     1           Ecr_MAX_entry(1)) THEN                            !<OS-2>
+            IF ((Ecr_OLD_entry(1) + dEcr(1)) .GT. Ecr_MAX_entry(1)) THEN !<OS-2>
 C              alpha = fraction of step at which Ecr(1) reaches Ecr_MAX(1)
-               alpha = (Ecr_MAX_entry(1) - Ecr_OLD_entry(1))      !<OS-2>
-     1               / dEcr(1)                                     !<OS-2>
-               alpha = MAX(alpha, 0.05D0)   ! lower bound: at least 5%  !<OS-2>
+               alpha = (Ecr_MAX_entry(1) - Ecr_OLD_entry(1))/ dEcr(1)   !<OS-2>
+               alpha = MAX(alpha, 0.20D0)   ! lower bound: at least 20%  !<OS-2>
                PNEWDT = MIN(PNEWDT, alpha * 0.85D0)               !<OS-2>
 C              Note: we do NOT clamp Ecr here. ABAQUS will redo this
 C              increment from scratch with the smaller step, so the
 C              computed dEcr (and hence Ecr_MAX update) will be correct.
+C                write(*,*) "Ecr_OLD_entry(1): ",Ecr_OLD_entry(1), "Ecr_MAX_entry(1): ", Ecr_MAX_entry(1)
+               write(*,*) "alpha: ",alpha
+                  IF (alpha .LE. 0.20D0) THEN
+                        PNEWDT = 1.0d0
+                        write(*,*) "PNEWDT: ", PNEWDT
+                  END IF
             END IF                                                   !<OS-2>
          END IF                                                      !<OS-2>
       END IF                                                         !<OS-2>
@@ -477,8 +503,8 @@ C-----------------------------------------------------------------------
       REAL*8 :: Ecr_TEMP(2)
       REAL*8 :: scr_max, Ecr_n_ult
       REAL*8 :: slope_soft
-      REAL*8, PARAMETER :: R_RES  = 5.0D-5
-      REAL*8, PARAMETER :: RES_K  = 1.0D-5
+      REAL*8, PARAMETER :: R_RES  = 1.0D-8
+      REAL*8, PARAMETER :: RES_K  = 1.0D-8
       REAL*8, PARAMETER :: ECR_MIN= 1.0D-14
 
       IF (sigcr0 .LT. 1.0D-12) THEN
@@ -553,8 +579,7 @@ C     --- Shear crack stiffness D_cr(2,2) ---
 
 C     !<OS-1> Total form for shear traction in the secant zone too.
 C             The shear secant law: tau_cr = Dcr(2,2) * gam_cr_OLD
-      IF (Ecr_OLD(1) .LT. Ecr_MAX(1) .AND.
-     1    Ecr_TEMP(1) .LT. Ecr_n_ult) THEN
+      IF (Ecr_OLD(1) .LT. Ecr_MAX(1) .AND. Ecr_TEMP(1) .LT. Ecr_n_ult) THEN
          scr(2) = Dcr(2,2) * Ecr_OLD(2)               !<OS-1>
 C        (was: scr(2) = scr_old(2) + Dcr(2,2)*dEcr(2))
       ELSE
@@ -583,12 +608,10 @@ C-----------------------------------------------------------------------
       term22 = Dcr + MATMUL(TRANSPOSE(N), MATMUL(Dco, N))
 
       detT = term22(1,1)*term22(2,2) - term22(1,2)*term22(2,1)
-      IF (ABS(detT) .LT. SING_TOL*(ABS(term22(1,1))*ABS(term22(2,2))
-     1                              + 1.0D0)) THEN
-         WRITE(*,'(A,1PG12.4)') ' WARNING: Dcocr Y near-singular, det=',
-     1                           detT
+      IF (ABS(detT) .LT. SING_TOL*(ABS(term22(1,1))*ABS(term22(2,2)) + 1.0D0)) THEN
+         WRITE(*,'(A,1PG12.4)') ' WARNING: Dcocr Y near-singular, det=', detT
          Dcocr  = Dco
-         PNEWDT = 0.5D0
+         PNEWDT = MIN(PNEWDT, 0.5D0)
          RETURN
       END IF
 
