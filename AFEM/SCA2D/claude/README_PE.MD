@@ -131,12 +131,12 @@ eigenvector.
 
 ### 3. Crack Kinematics — N Matrix
 
-Let the crack unit normal be $\mathbf{n} = [c,\;s]^T$ with $c = \cos\theta$, $s = \sin\theta$.
+Let the crack unit normal be $\mathbf{n} = [c\;s]^T$ with $c = \cos\theta$, $s = \sin\theta$.
 
 The **N matrix** (4×2) maps local crack strain increments
 
 $$
-\Delta{\varepsilon}_{cr} = [\Delta\varepsilon_{cr,n},\;\Delta\gamma_{cr,t}]^T
+\Delta{\varepsilon}_{cr} = [\Delta\varepsilon_{cr,n}\;\Delta\gamma_{cr,t}]^T
 $$
 
 to the corresponding contribution in global Voigt strain:
@@ -153,7 +153,7 @@ $$
 
 Its transpose $\mathbf{N}^T$ recovers local crack strains from global strains:
 
-$$\Delta\boldsymbol{\varepsilon}_{cr} = \mathbf{N}^T\Delta\boldsymbol{\varepsilon}_{global}$$
+$$\Delta\mathbf{\varepsilon}_{cr} = \mathbf{N}^T\Delta\mathbf{\varepsilon}_{global}$$
 
 **Verification:** for a horizontal crack ($\theta = 0$, $c=1$, $s=0$):
 
