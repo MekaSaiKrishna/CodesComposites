@@ -54,7 +54,7 @@ include 'formulation_AFEM2D_PE.for'
 | 2     | MODE                     | Failure mode: +1 = tensile, −1 = compressive     |
 | 3     | L                        | Element size (crack band width)                  |
 | 4     | FI\_MAX                  | Maximum failure index attained                   |
-| 5     | cos θ                    | Cosine of crack-normal angle                     |
+| 5     | cos θ                    | Cosine of crack-normal angle, where θ is angle of normal with respect to local material orientation X-axis                     |
 | 6     | sin θ                    | Sine of crack-normal angle                       |
 | 7     | ε\_cr,n^MAX              | Maximum normal local crack strain                |
 | 8     | ε\_cr,t^MAX              | Maximum shear local crack strain                 |
