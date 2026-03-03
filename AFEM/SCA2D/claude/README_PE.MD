@@ -106,11 +106,11 @@ which principal stress value.
 
 **Tensile failure index:**
 
-$$\text{FI}_T = \frac{\sigma_{\max}}{X_T}, \qquad \sigma_{\max} = \max(\sigma_1,\,\sigma_2,\sigma_3)$$
+$$\text{FI}_T = \frac{\sigma_{\max}}{X_T}, \qquad \sigma_{\max} = \max(\sigma_1,\sigma_2,\sigma_3)$$
 
 **Compressive failure index:**
 
-$$\text{FI}_C = \frac{|\sigma_{\min}|}{X_T}, \qquad \sigma_{\min} = \min(\sigma_1,\,\sigma_2,\sigma_3)$$
+$$\text{FI}_C = \frac{|\sigma_{\min}|}{X_T}, \qquad \sigma_{\min} = \min(\sigma_1,\sigma_2,\sigma_3)$$
 
 **Overall failure index and dominant mode:**
 
