@@ -21,9 +21,11 @@ Despite the branch names, the actual physical meaning is:
 
 The key values are:
 
-$$D_{cr,nn}^{\text{softening}} = \underbrace{-\frac{\sigma_{cr0}^2}{2\,G_{Ic}/L_{eff}}}_{\text{slope\_soft}} \quad (<0)$$
+$$D_{cr,nn}^{\text{softening}} = \underbrace{-\frac{\sigma\_{cr0}^2}{2G\_{Ic}/L\_{eff}}}_{\text{slope-soft  < 0}}$$
 
-$$D_{cr,nn}^{\text{secant}} = \frac{\sigma_{cr}(\varepsilon_{cr,n}^{MAX})}{\varepsilon_{cr,n}^{MAX}} = \frac{\sigma_{cr0} + \text{slope\_soft}\cdot\varepsilon_{cr,n}^{MAX}}{\varepsilon_{cr,n}^{MAX}} \quad (>0)$$
+$$
+D_{cr,nn}^{\text{secant}} = \frac{\sigma_{cr}(\varepsilon_{cr,n}^{MAX})}{\varepsilon_{cr,n}^{MAX}}= \frac{\sigma_{cr0} + \text{(slope-soft)}\cdot\varepsilon_{cr,n}^{MAX}}{\varepsilon_{cr,n}^{MAX}} \quad (>0)
+$$
 
 ---
 
@@ -68,7 +70,7 @@ Because `D_cr < 0` here, `Y` is reduced. If `|slope_soft|` is comparable to `N^T
 
 But `scr_old` stored in STATEV was computed using `slope_soft` in the PREVIOUS increment:
 
-$$\sigma_{cr}^{old} = \sigma_{cr}^{env} + |\text{slope\_soft}| \cdot \delta = \sigma_{cr0} + \text{slope\_soft}\cdot(\varepsilon_{cr,n}^{MAX} - \delta)$$
+$$\sigma_{cr}^{old} = \sigma_{cr}^{env} + |\text{slope-soft}| \cdot \delta = \sigma_{cr0} + \text{slope-soft}\cdot(\varepsilon_{cr,n}^{MAX} - \delta)$$
 
 This is the **softening curve** value at `Ecr_OLD`. However, the correct traction for the
 secant branch at the same point is:
@@ -150,7 +152,7 @@ admissibility surface (yield or damage envelope). The standard remedy is a two-s
 
 For the **linear softening** damage surface here:
 
-$$f(\sigma_{cr},\,\varepsilon_{cr,n}^{MAX}) = \sigma_{cr} - \left[\sigma_{cr0} + \text{slope\_soft}\cdot\varepsilon_{cr,n}^{MAX}\right] \leq 0$$
+$$f(\sigma_{cr},\,\varepsilon_{cr,n}^{MAX}) = \sigma_{cr} - \left[\sigma_{cr0} + \text{slope-soft}\cdot\varepsilon_{cr,n}^{MAX}\right] \leq 0$$
 
 An overshoot occurs when the secant-computed `dEcr` carries `ε_cr_n` above `ε_cr_n^{MAX}`,
 which would give `f > 0`.
