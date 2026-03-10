@@ -241,7 +241,7 @@ $$D_{cr,tt} = D_{cr,nn} \times \frac{1}{2(1+\nu)} \times 10^{-8} \approx 0$$
 
 **Stress continuity** at the crack face (traction continuity):
 
-$$\mathbf{N}^T\mathbf{D}_{co}\bigl(\Delta\boldsymbol{\varepsilon} - \mathbf{N}\Delta\boldsymbol{\varepsilon}_{cr}\bigr)
+$$\mathbf{N}^T\mathbf{D}_{co}\bigl(\Delta\boldsymbol{\varepsilon} - \mathbf{N}\Delta e_{cr}\bigr)
 = \mathbf{D}_{cr}\Delta\varepsilon_{cr}$$
 
 Rearranging to solve for $\Delta\boldsymbol{\varepsilon}_{cr}$:
