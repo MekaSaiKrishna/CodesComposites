@@ -250,7 +250,7 @@ $$\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)\Delta\bol
 = \mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}$$
 
 $$
-\boxed{\Delta\boldsymbol{\varepsilon}_{cr} =
+\boxed{\Delta e_{cr} =
 \underbrace{\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)^{-1}}_{\mathbf{Y}^{-1}}
 \mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}}
 $$
