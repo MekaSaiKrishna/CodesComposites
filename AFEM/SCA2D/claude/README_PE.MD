@@ -38,10 +38,10 @@ include 'formulation_AFEM2D_PE.for'
 
 | Index | Symbol   | Description                        | Units    |
 |-------|----------|------------------------------------|----------|
-| 1     | E        | Young's modulus                    | MPa      |
+| 1     | E        | Young's modulus                    | Pa       |
 | 2     | ν        | Poisson's ratio                    | —        |
-| 3     | G\_Ic    | Mode I fracture toughness          | N/mm     |
-| 4     | X\_T     | Tensile (& compressive) strength   | MPa      |
+| 3     | G\_Ic    | Mode I fracture toughness          | J/m²     |
+| 4     | X\_T     | Tensile (& compressive) strength   | Pa       |
 | 5     | INDEX    | Failure criteria selector (0 or 1) | —        |
 
 ---
@@ -54,7 +54,7 @@ include 'formulation_AFEM2D_PE.for'
 | 2     | MODE                     | Failure mode: +1 = tensile, −1 = compressive     |
 | 3     | L                        | Element size (crack band width)                  |
 | 4     | FI\_MAX                  | Maximum failure index attained                   |
-| 5     | cos θ                    | Cosine of crack-normal angle, where θ is angle of normal with respect to local material orientation X-axis |
+| 5     | cos θ                    | Cosine of crack-normal angle                     |
 | 6     | sin θ                    | Sine of crack-normal angle                       |
 | 7     | ε\_cr,n^MAX              | Maximum normal local crack strain                |
 | 8     | ε\_cr,t^MAX              | Maximum shear local crack strain                 |
@@ -76,15 +76,13 @@ include 'formulation_AFEM2D_PE.for'
 
 For an isotropic material under plane strain the 4×4 stiffness matrix is:
 
-$$
-\mathbf{D}_{co} = \frac{E}{(1+\nu)(1-2\nu)}
+$$\mathbf{D}_{co} = \frac{E}{(1+\nu)(1-2\nu)}
 \begin{bmatrix}
   1-\nu & \nu   & \nu   & 0 \\
   \nu   & 1-\nu & \nu   & 0 \\
   \nu   & \nu   & 1-\nu & 0 \\
   0     & 0     & 0     & \dfrac{1-2\nu}{2}
-\end{bmatrix}
-$$
+\end{bmatrix}$$
 
 where the stress and strain vectors follow Voigt notation:
 
@@ -93,24 +91,22 @@ $$\{\sigma\} = [\sigma_{xx},\;\sigma_{yy},\;\sigma_{zz},\;\tau_{xy}]^T, \qquad
 
 The incremental linear-elastic stress update is:
 
-$$\Delta\{\sigma\} = \mathbf{D}_{co}\Delta\{\varepsilon\}$$
+$$\Delta\{\sigma\} = \mathbf{D}_{co}\,\Delta\{\varepsilon\}$$
 
 ---
 
 ### 2. Failure Criterion — Maximum Principal Stress
 
 Principal stresses $\sigma_1 \geq \sigma_2 \geq \sigma_3$ (and their eigenvectors) are
-obtained from the ABAQUS built-in routine `SPRIND`. Point to note, when SPRIND is used, the order in which $\sigma_1, \sigma_2, \sigma_3$
-are generated are random and don't follow the above inequality. Hence we need to manually check using a FOR loop which index corresponds to
-which principal stress value.
+obtained from the ABAQUS built-in routine `SPRIND`.
 
 **Tensile failure index:**
 
-$$\text{FI}_T = \frac{\sigma_{\max}}{X_T}, \qquad \sigma_{\max} = \max(\sigma_1,\sigma_2,\sigma_3)$$
+$$\text{FI}_T = \frac{\sigma_{\max}}{X_T}, \qquad \sigma_{\max} = \max(\sigma_1,\,\sigma_2,\,\sigma_3)$$
 
 **Compressive failure index:**
 
-$$\text{FI}_C = \frac{|\sigma_{\min}|}{X_T}, \qquad \sigma_{\min} = \min(\sigma_1,\sigma_2,\sigma_3)$$
+$$\text{FI}_C = \frac{|\sigma_{\min}|}{X_T}, \qquad \sigma_{\min} = \min(\sigma_1,\,\sigma_2,\,\sigma_3)$$
 
 **Overall failure index and dominant mode:**
 
@@ -131,39 +127,27 @@ eigenvector.
 
 ### 3. Crack Kinematics — N Matrix
 
-Let the crack unit normal be $\mathbf{n} = [c\;s]^T$ with $c = \cos\theta$, $s = \sin\theta$.
+Let the crack unit normal be $\mathbf{n} = [c,\;s]^T$ with $c = \cos\theta$, $s = \sin\theta$.
 
 The **N matrix** (4×2) maps local crack strain increments
-
-$$
-\Delta{\varepsilon}_{cr} = [\Delta\varepsilon_{cr,n}\;\Delta\gamma_{cr,t}]^T
-$$
-
+$\Delta\boldsymbol{\varepsilon}_{cr} = [\Delta\varepsilon_{cr,n},\;\Delta\gamma_{cr,t}]^T$
 to the corresponding contribution in global Voigt strain:
 
-$$
-\mathbf{N} =
+$$\mathbf{N} =
 \begin{bmatrix}
   c^2  & -cs       \\
-  s^2  & cs   \\
+  s^2  & \phantom{-}cs   \\
   0    & 0         \\
   2sc  & c^2 - s^2
-\end{bmatrix} \in \mathbb{R}^{4\times 2}
-$$
+\end{bmatrix} \in \mathbb{R}^{4\times 2}$$
 
 Its transpose $\mathbf{N}^T$ recovers local crack strains from global strains:
 
-$$\Delta\mathbf{\varepsilon}_{cr} = \mathbf{N}^T\Delta\mathbf{\varepsilon}_{global}$$
+$$\Delta\boldsymbol{\varepsilon}_{cr} = \mathbf{N}^T\,\Delta\boldsymbol{\varepsilon}_{global}$$
 
 **Verification:** for a horizontal crack ($\theta = 0$, $c=1$, $s=0$):
 
-$$\mathbf{N} = 
-\begin{bmatrix}
-1&0\\
-0&0\\
-0&0\\
-0&1
-\end{bmatrix},
+$$\mathbf{N} = \begin{bmatrix}1&0\\0&0\\0&0\\0&1\end{bmatrix},
 \quad \mathbf{N}^T\{\varepsilon\} = [\varepsilon_{xx},\;\gamma_{xy}]^T \;\checkmark$$
 
 ---
@@ -172,23 +156,23 @@ $$\mathbf{N} =
 
 The normal crack traction evolves with crack opening strain following a **linear softening law**:
 
-$$\sigma_{cr}(\varepsilon_{cr,n}) = \sigma_{cr0} - \frac{\sigma_{cr0}^{2}}{2G_{Ic}/L_{eff}}\varepsilon_{cr,n}$$
+$$\sigma_{cr}(\varepsilon_{cr,n}) = \sigma_{cr0} - \frac{\sigma_{cr0}^{\,2}}{2\,G_{Ic}/L_{eff}}\,\varepsilon_{cr,n}$$
 
 where:
 
 | Symbol         | Meaning                                          |
 |----------------|--------------------------------------------------|
 | $\sigma_{cr0}$ | Peak crack traction (= normal stress at failure) |
-| $G_{Ic}$       | Mode I fracture toughness [N/mm]                 |
+| $G_{Ic}$       | Mode I fracture toughness [J/m²]                 |
 | $L_{eff}$      | Effective element size (crack band width)        |
 
 **Ultimate crack strain** (zero traction):
 
-$$\varepsilon_{cr,n}^{u} = \frac{2G_{Ic}}{L_{eff}\sigma_{cr0}}$$
+$$\varepsilon_{cr,n}^{u} = \frac{2\,G_{Ic}}{L_{eff}\;\sigma_{cr0}}$$
 
 **Fracture energy equivalence** (area under the traction–separation curve × element size = G\_Ic):
 
-$$\frac{1}{2}\sigma_{cr0}\varepsilon_{cr,n}^{u}L_{eff} = G_{Ic} \;\checkmark$$
+$$\frac{1}{2}\,\sigma_{cr0}\,\varepsilon_{cr,n}^{u}\,L_{eff} = G_{Ic} \;\checkmark$$
 
 ---
 
@@ -197,7 +181,7 @@ $$\frac{1}{2}\sigma_{cr0}\varepsilon_{cr,n}^{u}L_{eff} = G_{Ic} \;\checkmark$$
 To prevent snap-back (negative energy dissipation) and ensure mesh-size-independent fracture
 energy, the element size must satisfy:
 
-$$\boxed{L_{eff} \leq \frac{2G_{Ic}E}{\sigma_{cr0}^{2}}}$$
+$$\boxed{L_{eff} \leq \frac{2\,G_{Ic}\,E}{\sigma_{cr0}^{\,2}}}$$
 
 If this condition is violated, the analysis aborts with a diagnostic message recommending a
 smaller element size.
@@ -206,8 +190,8 @@ smaller element size.
 
 ### 6. Crack Constitutive Matrix D\_cr
 
-The 2×2 crack stiffness matrix $$D_{cr}$$ (in local crack coordinates) governs the
-traction–crack-strain relationship: $$\Delta\sigma_{cr} = D_{cr}\Delta\varepsilon_{cr}$$.
+The 2×2 crack stiffness matrix $\mathbf{D}_{cr}$ (in local crack coordinates) governs the
+traction–crack-strain relationship: $\Delta\boldsymbol{\sigma}_{cr} = \mathbf{D}_{cr}\,\Delta\boldsymbol{\varepsilon}_{cr}$.
 
 The normal and shear components are **decoupled** ($D_{cr,12} = D_{cr,21} = 0$).
 
@@ -221,13 +205,13 @@ The normal and shear components are **decoupled** ($D_{cr,12} = D_{cr,21} = 0$).
 
 where:
 
-$$\sigma_{cr}^{MAX} = \sigma_{cr0} - \frac{\sigma_{cr0}^2}{2G_{Ic}/L_{eff}}\varepsilon_{cr,n}^{MAX}
+$$\sigma_{cr}^{MAX} = \sigma_{cr0} - \frac{\sigma_{cr0}^2}{2\,G_{Ic}/L_{eff}}\;\varepsilon_{cr,n}^{MAX}
 \quad \text{(traction at current crack strain maximum)}$$
 
-$$\sigma_{cr0,r} = 5\times10^{-5}\times\sigma_{cr0}
+$$\sigma_{cr0,r} = 5\times10^{-5}\;\sigma_{cr0}
 \quad \text{(residual traction for numerical stability)}$$
 
-$$\varepsilon_{cr,n}^{temp} = \max\left(|\varepsilon_{cr,n}^{OLD}|,|\varepsilon_{cr,n}^{MAX}|\right)$$
+$$\varepsilon_{cr,n}^{temp} = \max\!\left(|\varepsilon_{cr,n}^{OLD}|,\;|\varepsilon_{cr,n}^{MAX}|\right)$$
 
 **Shear component:**
 
@@ -241,21 +225,19 @@ $$D_{cr,tt} = D_{cr,nn} \times \frac{1}{2(1+\nu)} \times 10^{-8} \approx 0$$
 
 **Stress continuity** at the crack face (traction continuity):
 
-$$\mathbf{N}^T\mathbf{D}_{co}\bigl(\Delta\boldsymbol{\varepsilon} - \mathbf{N}\Delta e_{cr}\bigr)
-= \mathbf{D}_{cr}\Delta e_{cr}$$
+$$\mathbf{N}^T\,\mathbf{D}_{co}\bigl(\Delta\boldsymbol{\varepsilon} - \mathbf{N}\,\Delta\boldsymbol{\varepsilon}_{cr}\bigr)
+= \mathbf{D}_{cr}\,\Delta\boldsymbol{\varepsilon}_{cr}$$
 
 Rearranging to solve for $\Delta\boldsymbol{\varepsilon}_{cr}$:
 
 $$\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)\Delta\boldsymbol{\varepsilon}_{cr}
-= \mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}$$
+= \mathbf{N}^T\mathbf{D}_{co}\,\Delta\boldsymbol{\varepsilon}$$
 
-$$
-\boxed{\Delta e_{cr} =
+$$\boxed{\Delta\boldsymbol{\varepsilon}_{cr} =
 \underbrace{\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)^{-1}}_{\mathbf{Y}^{-1}}
-\mathbf{N}^T\mathbf{D}_{co}\Delta\boldsymbol{\varepsilon}}
-$$
+\mathbf{N}^T\mathbf{D}_{co}\,\Delta\boldsymbol{\varepsilon}}$$
 
-where $Y = D_{cr} + N^TD_{co}N \, \in \mathbb{R}^{2\times2}$
+where $\mathbf{Y} = \mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N} \in \mathbb{R}^{2\times2}$
 is inverted via LU decomposition (`matrixInverse` from `matrix_inverse.for`).
 
 ---
@@ -265,14 +247,16 @@ is inverted via LU decomposition (`matrixInverse` from `matrix_inverse.for`).
 Substituting the expression for $\Delta\boldsymbol{\varepsilon}_{cr}$ back into the stress
 increment gives the **cracked-continuum consistent tangent**:
 
-$$\Delta\boldsymbol{\sigma} = \mathbf{D}_{cocr}\Delta\boldsymbol{\varepsilon}$$
+$$\Delta\boldsymbol{\sigma} = \mathbf{D}_{cocr}\,\Delta\boldsymbol{\varepsilon}$$
 
-$$
-D_{cocr} = D_{co} - D_{co}N \underbrace{\left(D_{cr} + N^TD_{co}N\right)^{-1}}_{Y^{-1}}N^TD_{co}
-$$
+$$\boxed{\mathbf{D}_{cocr} = \mathbf{D}_{co}
+- \mathbf{D}_{co}\,\mathbf{N}
+\underbrace{\left(\mathbf{D}_{cr} + \mathbf{N}^T\mathbf{D}_{co}\mathbf{N}\right)^{-1}}_{\mathbf{Y}^{-1}}
+\mathbf{N}^T\mathbf{D}_{co}}$$
 
-This is returned in `DDSDDE` for the ABAQUS Newton–Raphson global solver. It reduces to $D_{co}$ when there is no crack and approaches a rank-deficient matrix
-as the crack stiffness $D_{cr} \to 0$.
+This is returned in `DDSDDE` for the ABAQUS Newton–Raphson global solver.
+It reduces to $\mathbf{D}_{co}$ when there is no crack and approaches a rank-deficient matrix
+as the crack stiffness $\mathbf{D}_{cr} \to \mathbf{0}$.
 
 ---
 

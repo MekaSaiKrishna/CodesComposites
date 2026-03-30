@@ -1,49 +1,58 @@
 C***********************************************************************
-C     ! Isotropic Incremental SCA 2D Plane Strain  [Enhanced v1 - Overshoot Fixes]
+C     ! Isotropic Incremental SCA 2D Plane Strain  [Enhanced v2]
 C     ! ----------------------------------------------------------------
-C     ! Based on: claude_AFEM2D_PE.for
+C     ! Based on: claude_AFEM2D_PEv1.for (03/11/2026)
 C     !
-C     ! Overshoot fixes added in this version (see fixes_overshooting.md):
+C     ! Changes from v1 (all targeted bug fixes, no behavioural rewrites):
 C     !
-C     !  OS-1 [calcDcr_PE, secant branch]:
-C     !       Replace incremental scr update with TOTAL FORM:
-C     !         scr(1) = Dcr(1,1) * Ecr_OLD(1)   (was: scr_old + Dcr*dEcr_old)
-C     !       This prevents the traction from inheriting an inconsistent
-C     !       scr_old value when the code transitions from the softening
-C     !       branch to the secant branch.
+C     !  FIX-A [sca2diso_PE, local declarations]:
+C     !       Removed unused local variables J (INTEGER) and
+C     !       Sco(NTENS,NTENS) (REAL*8). Neither was ever referenced.
+C     !       Reason: dead declarations can confuse compilers and readers;
+C     !       with IMPLICIT NONE they serve no purpose.
 C     !
-C     !  OS-2 [calcEcr_PE]:
-C     !       Detect reloading overshoot — when the secant branch is active
-C     !       and the computed Ecr(1) exceeds Ecr_MAX(1). Compute the
-C     !       fractional step alpha at which Ecr(1) = Ecr_MAX(1) and set
-C     !       PNEWDT = alpha * 0.85 so ABAQUS restarts with a smaller step.
+C     !  FIX-B [sca2diso_PE, pre-peak init block]:
+C     !       Added  STATEV(4) = ZERO  to the pre-peak initialisation.
+C     !       Was: STATEV(16) and STATEV(17) were zeroed but STATEV(4)
+C     !       (FI_MAX history) was not, leaving it with the value from
+C     !       the previous converged increment when ABAQUS re-enters the
+C     !       pre-peak block after a step cut.
+C     !       Reason: although STATEV(4) is always overwritten before use
+C     !       in the normal path, the initiation-overshoot RETURN exits
+C     !       before the  STATEV(4) = FI_MAX  line at crack activation,
+C     !       so stale FI_MAX can persist across retried increments.
 C     !
-C     !  OS-3 [REMOVED]:
-C     !       The first-closure PNEWDT=0.5 was removed because it caused an
-C     !       infinite ABAQUS step-cut loop: ABAQUS resets STATEV on restart,
-C     !       so Ecr_OLD_save = Ecr_MAX_save on every retry → OS-3 fires again
-C     !       → exponential step reduction → ABAQUS gives up. Fix-GAP below
-C     !       eliminates the underlying traction discontinuity, making OS-3
-C     !       redundant.
+C     !  FIX-C [calcEcr_PE, OS-2new block]:
+C     !       Removed the  IF (alpha .LE. 0.10D0) PNEWDT = 1.0d0
+C     !       override that followed the MIN(PNEWDT, alpha) assignment.
+C     !       Was: when alpha_raw < 0.10, alpha was clamped to 0.10 by
+C     !       MAX(alpha, 0.10D0), then PNEWDT = MIN(PNEWDT, 0.10) was
+C     !       immediately overridden by the hard assignment PNEWDT = 1.0.
+C     !       This completely disabled step control precisely when the
+C     !       step was overshooting Ecr_n_ult by the largest margin.
+C     !       Reason: the intent (avoid infinite cut loops) is already
+C     !       served by the 0.10 lower bound on alpha; the override is
+C     !       therefore both redundant and dangerous. It also violates
+C     !       the "always MIN, never assign" PNEWDT rule and can undo
+C     !       a valid PNEWDT reduction made earlier in the same call.
 C     !
-C     !  FIX-GAP [sca2diso_PE, after STATEV(9:10) update]:
-C     !       Re-enable Fix #9: call calcDcr_PE a second time using the
-C     !       UPDATED Ecr_OLD (= Ecr_new). With OS-1 total form in the secant
-C     !       branch: scr(1) = D_sec * Ecr_new → STATEV(14) is now consistent
-C     !       with STATEV(9), eliminating the one-increment lag that produced
-C     !       the gap in the σ_cr vs ε_cr plot during unload/reload.
+C     !  FIX-D [calcDcocr_PE]:
+C     !       Restored PNEWDT as INTENT(INOUT) argument. Near-singular
+C     !       tangent now sets PNEWDT = MIN(PNEWDT, 0.5D0) and prints a
+C     !       warning before falling back to Dco.
+C     !       Was: PNEWDT was removed from v1 with the comment that
+C     !       "cutting the step here is expensive and rarely helps."
+C     !       Reason: while the elastic-tangent fallback is correct, a
+C     !       silent recovery gives ABAQUS no signal that something went
+C     !       wrong. The step cut nudges Newton-Raphson toward a state
+C     !       where the tangent is better conditioned and leaves a trace
+C     !       in the ABAQUS message file. The call site in sca2diso_PE
+C     !       is updated to pass PNEWDT.
 C     !
-C     !  OS-4 [sca2diso_PE, interpenetration clamp]:
-C     !       Fix wrong formula for dEcr when clamping Ecr(1) to zero.
-C     !       Use STATEV(9) — the true previous crack strain — instead of
-C     !       the already-updated Ecr_OLD.
-C     !       Correct:  dEcr(1) = ZERO - STATEV(9)
-C     !       Previous: dEcr(1) = -Ecr_OLD(1)   [was wrong: Ecr_OLD = Ecr here]
-C     !
-C     ! All other code is identical to claude_AFEM2D_PE.for.
-C     ! Changed lines are marked  !<OS-n>  for traceability.
+C     ! All other code is identical to claude_AFEM2D_PEv1.for.
+C     ! Changed lines are marked  !<Fv2-X>  for traceability.
 C     ! ----------------------------------------------------------------
-C     ! Last Modified: 03/03/2026
+C     ! Last Modified: 03/30/2026
 C     ! meka1@purdue.edu
 C***********************************************************************
       SUBROUTINE sca2diso_PE(NTENS, NDI, NSHR, DFGRD1, NSTATV, NPROPS,
@@ -64,13 +73,13 @@ C     --- ABAQUS standard arguments ---
       INTEGER     :: isIMPLICIT
 
 C     --- Local variables ---
-      INTEGER     :: INDEX, I, J, K1
+      INTEGER     :: INDEX, I, K1                               !<Fv2-A> removed unused J
       REAL*8      :: E, nu, GIc, XT, G, eta
       REAL*8      :: sigcr0, taucr0, sigcr0_r, BL
       REAL*8      :: isCRACKED, MODE
       REAL*8      :: FI_T, FI_C, FI_MAX, J_FAIL, J_MIN, PMIN, J_MAX, PMAX
       REAL*8      :: PRINS(3), T(3,3)
-      REAL*8      :: Dco(NTENS,NTENS), Sco(NTENS,NTENS)
+      REAL*8      :: Dco(NTENS,NTENS)                           !<Fv2-A> removed unused Sco
 
       REAL*8      :: N(4,2)
       REAL*8      :: Ecr_MAX(2), Ecr_OLD(2)
@@ -89,7 +98,7 @@ C     --- Numerical constants ---
       REAL*8, PARAMETER :: TWO     = 2.0D0
       REAL*8, PARAMETER :: TINY_   = 1.0D-8 ! seed value for crack strains
       REAL*8, PARAMETER :: RES_    = 1.0D-5 ! residual stiffness after full failure
-      REAL*8, PARAMETER :: FI_CRIT = 1.0D0 ! failure index threshold
+      REAL*8, PARAMETER :: FI_CRIT = 1.0D0  ! failure index threshold
 
 C***********************************************************************
 C     READ MATERIAL PROPERTIES
@@ -109,9 +118,8 @@ C     Mirrors ABAQUS cohesive element viscosity parameter.
       END IF
 
       G      = E/(TWO*(ONE + nu))
-      Leff   = ONE*L !for linear elements (CPE4)
-
-C       Leff   = 0.02 !Force this for DCB 2D Meka-Jiawen model
+      Leff   = ONE*L   ! characteristic element size (CELENT for CPE4)
+C       Leff   = 0.02  ! override for fixed-mesh DCB model (toggle if needed)
 
       MODE      = STATEV(2)
       sigcr0    = STATEV(16)
@@ -153,6 +161,7 @@ C=======================================================================
 C        Initialise local crack stresses (not yet initiated)
          STATEV(16) = ZERO
          STATEV(17) = ZERO
+         STATEV(4)  = ZERO   !<Fv2-B> clear FI_MAX history each pre-peak call
 
 C        Save stress at start of increment for overshoot detection
          SIG_prev = SIG
@@ -322,7 +331,7 @@ C
 C        Fix: call calcDcr_PE again with Ecr_OLD_new.  Now:
 C          Secant branch (OS-1): scr(1) = D_sec * Ecr_OLD_new
 C                                → STATEV(14) consistent with STATEV(9) ✓
-C          Softening branch    : scr(1) = scr_start(1) + slope_soft * dEcr_new
+C          Softening branch    : scr(1) = sigcr0 + slope_soft*Ecr_OLD_new
 C                                → scr at Ecr_new on the softening curve ✓
 C        Also refreshes Dcr for the STEP 9 tangent computation.
          CALL calcDcr_PE(Ecr_OLD, Ecr_MAX, GIc, sigcr0, taucr0, Leff,
@@ -330,7 +339,7 @@ C        Also refreshes Dcr for the STEP 9 tangent computation.
          STATEV(14:15) = scr
 
 C        STEP 9: Compute cracked tangent D_cocr
-         CALL calcDcocr_PE(Dco, Dcr, N, Dcocr)
+         CALL calcDcocr_PE(Dco, Dcr, N, Dcocr, PNEWDT)          !<Fv2-D>
 
          SIG = SIG + MATMUL(Dcocr, DSTRAN)
          IF (isIMPLICIT .EQ. 1) DDSDDE = Dcocr
@@ -414,7 +423,6 @@ C-----------------------------------------------------------------------
 
 C-----------------------------------------------------------------------
 C     IV. Wrapper for ABAQUS XIT
-C         Unchanged from claude_AFEM2D_PE.for
 C-----------------------------------------------------------------------
       SUBROUTINE myExit_PE()
       CALL XIT
@@ -423,9 +431,6 @@ C-----------------------------------------------------------------------
 
 C-----------------------------------------------------------------------
 C     V. calcEcr_PE — compute crack strain increment and update history
-C
-C     Changes vs claude_AFEM2D_PE.for:
-C       !<OS-2> Reloading overshoot detection + PNEWDT
 C-----------------------------------------------------------------------
       SUBROUTINE calcEcr_PE(Ecr_OLD, Ecr_MAX, DSTRAN, Dco, N,
      1           dEcr, Ecr, GIc, sigcr0, taucr0, Leff, nu, eta, DT,
@@ -444,7 +449,7 @@ C-----------------------------------------------------------------------
       REAL*8 :: NT_Dco(2,4), NT_Dco_N(2,2)
       REAL*8 :: Y(2,2), invY(2,2)
       REAL*8 :: detY, alpha
-      REAL*8 :: Ecr_n_ult,sigcr0_r
+      REAL*8 :: Ecr_n_ult, sigcr0_r
       REAL*8, PARAMETER :: SING_TOL = 1.0D-20
       REAL*8, PARAMETER :: R_RES  = 1.0D-8
 
@@ -477,28 +482,25 @@ C-----------------------------------------------------------------------
 
       dEcr = MATMUL(invY, MATMUL(NT_Dco, DSTRAN))
 
-C     !<OS-2> RELOADING OVERSHOOT (secant → softening transition)
-C             With total-form traction and viscous regularization, the
-C             stress is computed correctly even when Ecr overshoots
-C             Ecr_MAX. The FIX-GAP second calcDcr_PE call recomputes
-C             Dcr and scr for the actual post-step state.
-C             → No step cut needed. Accept the increment as-is.
+C     RELOADING OVERSHOOT (secant → softening transition):
+C     With total-form traction in both softening and secant branches,
+C     and the FIX-GAP second calcDcr_PE call, the traction is consistent
+C     whether or not Ecr overshoots Ecr_MAX in a single step.
+C     No step cut is needed here — accept the increment as-is.
 
-C     !<OS-2new> FAILURE OVERSHOOT DETECTION
-C             Only cut the step if Ecr would overshoot Ecr_n_ult by more
-C             than 20%. Small overshoots are handled by the residual
-C             branch which clamps scr to sigcr0_r. Only severe overshoots
-C             risk numerical instability.
+C     FAILURE OVERSHOOT DETECTION (OS-2new):
+C     Only cut the step if Ecr would overshoot Ecr_n_ult by more than
+C     0.5%. Small overshoots are handled by the residual branch which
+C     clamps scr to sigcr0_r. Only severe overshoots risk instability.
+C
+C     alpha floor of 0.10 prevents infinite cut loops: ABAQUS will
+C     never be asked for less than 10% of the current step.           !<Fv2-C>
       IF (in_nofail_zone) THEN
          IF (dEcr(1) .GT. 0.0D0) THEN
-            IF ((Ecr_OLD_entry(1)+dEcr(1)) .GT. 1.05D0*Ecr_n_ult) THEN
-C              alpha = fraction of step to reach Ecr_n_ult (not 1.05x)
+            IF ((Ecr_OLD_entry(1)+dEcr(1)) .GT. 1.005D0*Ecr_n_ult) THEN
                alpha = (Ecr_n_ult - Ecr_OLD_entry(1)) / dEcr(1)
                alpha = MAX(alpha, 0.10D0)
-               PNEWDT = MIN(PNEWDT, alpha)
-               IF (alpha .LE. 0.10D0) THEN
-                  PNEWDT = 1.0d0
-               END IF
+               PNEWDT = MIN(PNEWDT, alpha)                       !<Fv2-C> removed PNEWDT=1.0 override
             END IF
          END IF
       END IF
@@ -577,6 +579,8 @@ C           SECANT branch (unloading / reloading within damage surface)
 C              Ecr_MAX ~ 0 (just initiated): use softening slope
                Dcr(1,1) = slope_soft + visc_term
             END IF
+C           Total form: traction lies exactly on the secant from origin
+C           to (Ecr_MAX, scr_max). No accumulation from scr_old.
             scr(1) = Dcr(1,1) * Ecr_OLD(1)
          ELSE
 C           SOFTENING branch (on the damage envelope, crack propagating)
@@ -618,12 +622,17 @@ C     --- Shear crack stiffness D_cr(2,2) ---
 
 C-----------------------------------------------------------------------
 C     VII. calcDcocr_PE — cracked-continuum consistent tangent (4x4)
+C
+C     !<Fv2-D> PNEWDT restored as INTENT(INOUT). Near-singular tangent
+C              now signals ABAQUS with MIN(PNEWDT, 0.5) and prints a
+C              warning, rather than silently falling back to Dco.
 C-----------------------------------------------------------------------
-      SUBROUTINE calcDcocr_PE(Dco, Dcr, N, Dcocr)
+      SUBROUTINE calcDcocr_PE(Dco, Dcr, N, Dcocr, PNEWDT)       !<Fv2-D>
 
       IMPLICIT NONE
       REAL*8, INTENT(IN)    :: Dcr(2,2), Dco(4,4), N(4,2)
       REAL*8, INTENT(OUT)   :: Dcocr(4,4)
+      REAL*8, INTENT(INOUT) :: PNEWDT                            !<Fv2-D>
 
       REAL*8 :: term22(2,2), invT22(2,2)
       REAL*8 :: term42(4,2), term44(4,4)
@@ -635,10 +644,10 @@ C-----------------------------------------------------------------------
       detT = term22(1,1)*term22(2,2) - term22(1,2)*term22(2,1)
       IF (ABS(detT) .LT. SING_TOL*(ABS(term22(1,1))*ABS(term22(2,2))
      1    + 1.0D0)) THEN
-C        Use elastic tangent as fallback. No step cut — let Newton-
-C        Raphson iterate with the elastic tangent; cutting the step
-C        here is expensive and rarely helps convergence.
+         WRITE(*,'(A,1PG12.4)')                                  !<Fv2-D>
+     1       ' WARNING: Dcocr near-singular, det=', detT
          Dcocr  = Dco
+         PNEWDT = MIN(PNEWDT, 0.5D0)                            !<Fv2-D>
          RETURN
       END IF
 

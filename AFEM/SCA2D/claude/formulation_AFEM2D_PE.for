@@ -13,7 +13,7 @@ C Failure Criteria:
 C     -0) Max Principal Stress Failure Criteria (INDEX = 0)
 C     -1) Max Stress Failure Criteria           (INDEX = 1)
 C***********************************************************************
-      SUBROUTINE sca2diso(NTENS, NDI, NSHR, DFGRD1, NSTATV, NPROPS, NOEL,  
+      SUBROUTINE sca2diso_PE(NTENS, NDI, NSHR, DFGRD1, NSTATV, NPROPS, NOEL,  
      1      stepTIME, totalTIME, DT, PNEWDT, L, PROPS, EPS, DSTRAN, SIG, STATEV, 
      2      DDSDDE, DTEMP, isIMPLICIT)
           

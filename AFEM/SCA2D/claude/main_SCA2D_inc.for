@@ -47,5 +47,6 @@ C     MAX PRINCIPAL STRESS FAILURE CRTIERIA
 C       include 'formulation_AFEM2D_PS.for'
 
 C     MAX PRINCIPAL STRAIN FAILURE CRTIERIA
-      include 'claude_AFEM2D_PE.for'
+      include 'claude_AFEM2D_PEv3.for' !Overshooting method
+C       include 'formulation_AFEM2D_PEv2.for'
       include 'matrix_inverse.for'
