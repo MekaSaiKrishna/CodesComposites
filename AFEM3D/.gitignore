@@ -1,0 +1,23 @@
+# Abaqus output files
+*.odb
+*.lck
+*.msg
+*.sta
+*.dat
+*.log
+*.fil
+*.sim
+*.prt
+*.abq
+*.pac
+*.res
+*.stt
+*.mdl
+*.023
+*.com
+abaqus.rpy*
+
+# Scratch / temp
+*.bak
+*.tmp
+Thumbs.db
