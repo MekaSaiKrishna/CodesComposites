@@ -86,7 +86,6 @@ Metrics tracked per test:
 | Unloading/reloading | Fully tracked via zone flags and stored max crack strain (AFEM7) |
 
 
-
 # AFEM3D — ABAQUS UMAT: Incremental Smeared Crack Approach
 
 > **Active formulation:** `meka_formulation_AFEM8.for`  
@@ -113,7 +112,7 @@ Metrics tracked per test:
 This project implements **incremental progressive damage** for isotropic materials in ABAQUS using the **Smeared Crack Approach (SCA)**. Rather than inserting a discrete crack surface, the crack is smeared over the element volume using a characteristic length `Leff`, and its effect on the stress-strain response is captured through a modified continuum tangent `Dcocr`.
 
 **Compatible element:** C3D8 (3D 8-node brick, linear).  
-**Failure criterion (current):** Max Principal Stress.  
+**Failure criteria (current):** Max Principal Stress (Mode-I) + Direct Shear Stress (Mode-II).  
 **Material scope (current):** Isotropic only.
 
 ---
@@ -133,7 +132,7 @@ This project implements **incremental progressive damage** for isotropic materia
 
 | File | Description | Status | Last Debugged |
 |---|---|---|---|
-| `meka_formulation_AFEM8.for` | **ACTIVE.** AFEM7 + PNEWDT overshoot, J_FAIL tracking, double `calcDcr` call, interpenetration clamp, near-singular guards | Active | 06/11/2026 |
+| `meka_formulation_AFEM8.for` | **ACTIVE.** AFEM7 + PNEWDT overshoot, J_FAIL tracking, double `calcDcr` call, interpenetration clamp, near-singular guards, Mode-II shear TSL | Active | 06/11/2026 |
 | `meka_formulation_AFEM7.for` | Incremental SCA, unloading/reloading, Bazant regularization. No overshoot detection. | Archived | 02/17/2026 |
 | `meka_formulation_AFEM6.for` | Incremental SCA with global (not local) overshoot cutback | Archived | 11/12/2025 |
 | `meka_formulation_AFEM5.for` | Incremental SCA, fixed crack, multiple criteria, full Jacobian | Archived | 01/29/2026 |
@@ -178,14 +177,14 @@ The **characteristic length** `Leff = CELENT` (from ABAQUS) regularises the frac
 
 ---
 
-### 3.2 Traction-Separation Law (TSL)
+### 3.2 Mode-I Traction-Separation Law (Tensile Crack)
 
 The crack normal traction `σ_cr` is a linear function of crack opening strain `Ecr_n`:
 
 ```
   σ_cr
    │
-XT ┼────────────╮  ◄── peak (crack initiates here)
+XT ┼────────────╮  ◄── peak (crack initiates here, σ_cr = XT)
    │            │\
    │            │  \   slope_soft = -XT² / (2·GIc/Leff)
    │            │    \
@@ -203,123 +202,204 @@ XT ┼────────────╮  ◄── peak (crack initiates h
 
 ---
 
-### 3.3 Crack Transformation Matrix N
+### 3.3 Mode-II Traction-Separation Law (Shear Crack)
 
-ABAQUS `SPRIND` returns three principal stress eigenvectors `T(1,:)`, `T(2,:)`, `T(3,:)`. The index `J_FAIL` (1, 2, or 3) identifies which eigenvector is the crack **normal** direction — the one whose principal stress first reached `XT`.
+When shear failure governs (`τ ≥ XS` before σ₁ ≥ XT), the crack slides rather than opens. A Mode-II TSL is applied to the **sliding** crack strain `Ecr_s`:
+
+```
+  τ_cr
+   │
+XS ┼────────────╮  ◄── peak (crack initiates here, τ_cr = XS)
+   │            │\
+   │            │  \   slope_soft_II = -XS² / (2·G2c/Leff)
+   │            │    \
+   │            │      \
+ 0 ┼────────────┼────────╯──────── |Ecr_s|
+   0                Ecr_s_ult
+               = 2·G2c / (Leff·XS)
+
+  Fracture energy G2c = area under triangle = ½·XS·Ecr_s_ult·Leff
+```
+
+The TSL is **symmetric in shear direction** — the crack slides freely in ±. `Ecr_s` can be negative.  
+`τ_cr = SIGN(τ_eff, Ecr_s)` where `τ_eff` is determined from `|Ecr_s|`.
+
+**Special term:** `Dcr(1,1) = 1000·E` (penalty) prevents crack-face normal **opening** in mode-II.  
+Mode-I crack cannot have mode-II sliding, and mode-II crack cannot have mode-I opening.
+
+---
+
+### 3.4 Mode Determination at Initiation
+
+At every intact-element increment, two failure indices are computed from the elastic trial stress:
+
+```
+  FI_mode1  =  max[ PRINS(i) / XT ]   for PRINS(i) > 0
+              (max-principal-stress criterion — ABAQUS SPRIND)
+
+  FI_shear  =  max( |S12|, |S13|, |S23| ) / XS
+              (direct shear criterion — no principal stress rotation)
+```
+
+Failure initiates when either FI ≥ 1. The mode that reaches its criterion **first** (higher FI when both ≥ 1, or whichever crosses 1 first) is locked in permanently for that element.
+
+```
+  FI_shear ≥ 1 AND FI_shear > FI_mode1  →  MODE-II  (shear)
+  FI_mode1 ≥ 1 AND FI_mode1 ≥ FI_shear  →  MODE-I   (tensile)
+```
+
+`STATEV(2) = MODE` records this choice at initiation and never changes.
+
+---
+
+### 3.5 Mode-II Crack Orientation (Coordinate-Aligned)
+
+Unlike mode-I (which uses SPRIND eigenvectors), the mode-II crack frame is fixed to coordinate axes aligned with the dominant shear component:
+
+```
+   Dominant      T(1,:) = crack normal    T(2,:) = sliding dir    T(3,:) = secondary
+   ─────────     ──────────────────────   ─────────────────────   ───────────────────
+   |S12| max     [1, 0, 0]  (x-normal)   [0, 1, 0]  (y-sliding)  [0, 0, 1]
+   |S13| max     [1, 0, 0]  (x-normal)   [0, 0, 1]  (z-sliding)  [0, 1, 0]
+   |S23| max     [0, 1, 0]  (y-normal)   [0, 0, 1]  (z-sliding)  [1, 0, 0]
+```
+
+**Why coordinate-aligned works:** Verifying that `N(:,2)` maps `Ecr_s` to the correct shear component:
+
+```
+  S12 case: n=[1,0,0], m=[0,1,0]  →  N(4,2) = n₁m₂+n₂m₁ = 1  → Ecr_s → γ12  ✓
+  S13 case: n=[1,0,0], m=[0,0,1]  →  N(5,2) = n₃m₁+n₁m₃ = 1  → Ecr_s → γ13  ✓
+  S23 case: n=[0,1,0], m=[0,0,1]  →  N(6,2) = n₂m₃+n₃m₂ = 1  → Ecr_s → γ23  ✓
+```
+
+`J_FAIL = 2` always for Mode-II (the sliding direction is always component 2 in the local frame).
+
+---
+
+### 3.6 Crack Transformation Matrix N
 
 The **N matrix** (6×3) maps the local crack strain vector `[Ecr_n, Ecr_s1, Ecr_s2]` to global Voigt strain:
 
 ```
   LOCAL CRACK FRAME              GLOBAL VOIGT
                                  ┌────┐
-   Ecr_n  (opening,              │ ε₁₁│
-           along T(J_FAIL,:))    │ ε₂₂│
-   Ecr_s1 (sliding,         [N]  │ ε₃₃│
-           along T(j≠J_FAIL))──► │ γ₁₂│
-   Ecr_s2 (sliding,              │ γ₁₃│
-           along T(k≠J_FAIL))    │ γ₂₃│
+   Ecr_n  (opening or            │ ε₁₁│
+           penalty normal)       │ ε₂₂│
+   Ecr_s1 (sliding, J_FAIL=2)  [N]  │ ε₃₃│
+           along T(2,:)    ──►   │ γ₁₂│
+   Ecr_s2 (secondary shear)     │ γ₁₃│
+           along T(3,:)          │ γ₂₃│
                                  └────┘
   Column J of N = sym(n ⊗ d_J) in Voigt,
-  where n = T(J_FAIL,:), d_J = T(J,:)
+  where n = T(1,:) [crack normal], d_J = T(J,:)
 ```
-
-Because ABAQUS orders `PRINS(1) ≥ PRINS(2) ≥ PRINS(3)` for stress, `J_FAIL = 1` in almost all tensile scenarios. It is tracked explicitly for robustness.
 
 ---
 
-### 3.4 The Cracked Continuum Tangent Dcocr
+### 3.7 The Cracked Continuum Tangent Dcocr
 
-Once the crack strain increment `dEcr` is known, the cracked tangent (the Woodbury identity applied to the composite material system) is:
+The same Woodbury-identity formula applies for both modes:
 
 ```
   Dcocr = Dco  −  Dco·N·[Dcr + Nᵀ·Dco·N]⁻¹·Nᵀ·Dco
   ─────   ────     ────────────────────────────────
-  6×6     elastic  correction (rank-3 update)
-
-  Meaning: the overall stiffness = elastic stiffness
-           MINUS the stiffness "lost" to crack compliance
+  6×6     elastic  rank-3 correction (stiffness lost to crack compliance)
 ```
 
-The 3×3 matrix `Dcr` is diagonal. Only `Dcr(J_FAIL, J_FAIL)` follows the TSL. The two shear components get a near-zero residual stiffness scaled by `term·1e-5` where `term = 1/(2(1+ν))`.
-
----
-
-### 3.5 Increment Flow (Post-Peak Block)
-
-Each cracked increment steps through:
+`Dcr` is mode-dependent:
 
 ```
-  ┌── READ ──────────────────────────────────────────────┐
-  │  Ecr, Ecr_MAX, J_FAIL, T rows  ← STATEV             │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP A ─────────────────────────────────────────────┐
-  │  calcDcr(Ecr_old, Ecr_MAX, J_FAIL) → Dcr_old         │
-  │  (used only to build system matrix Y; scr discarded)  │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP B ─────────────────────────────────────────────┐
-  │  Y = Dcr_old + Nᵀ·Dco·N                              │
-  │  dEcr = Y⁻¹ · Nᵀ·Dco·DSTRAN         (solve)         │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP C ─────────────────────────────────────────────┐
-  │  POST-PEAK OVERSHOOT CHECK:                           │
-  │  if Ecr(J_FAIL)+dEcr(J_FAIL) > 1.05·Ecr_n_ult       │
-  │     → compute fraction α, set PNEWDT = α, continue   │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP D ─────────────────────────────────────────────┐
-  │  Ecr      = Ecr + dEcr                               │
-  │  Ecr_MAX  = max(Ecr, Ecr_MAX)   component-wise       │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP E ─────────────────────────────────────────────┐
-  │  INTERPENETRATION CLAMP:                              │
-  │  if Ecr(J_FAIL) < 0 → force Ecr(J_FAIL) = 0         │
-  │  (tensile crack cannot close past its reference)     │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP F ─────────────────────────────────────────────┐
-  │  calcDcr(Ecr_new, Ecr_MAX, J_FAIL) → Dcr_new, scr_n  │
-  │  (consistent update: eliminates 1-increment lag)     │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP G ─────────────────────────────────────────────┐
-  │  calcDcocr(Dco, Dcr_new, N) → Dcocr                  │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP H ─────────────────────────────────────────────┐
-  │  WRITE → STATEV (Ecr, Ecr_MAX, dEcr, Dcr_n, scr_n)  │
-  └──────────────────────────────────────────────────────┘
-              │
-              ▼
-  ┌── STEP I ─────────────────────────────────────────────┐
-  │  SIG    = SIG + Dcocr · DSTRAN                       │
-  │  DDSDDE = Dcocr           (implicit solver)          │
-  └──────────────────────────────────────────────────────┘
+  MODE-I  Dcr:                      MODE-II  Dcr:
+  ┌──────────────────────┐          ┌──────────────────────┐
+  │ TSL(Ecr_n)  0    0   │          │ 1000·E    0       0  │  ← penalty (blocks opening)
+  │    0      ε_shear 0  │          │    0    TSL(|Ecr_s|) 0│  ← mode-II TSL
+  │    0        0   ε_sh │          │    0      0    tiny  │
+  └──────────────────────┘          └──────────────────────┘
+   ε_shear = Dcr(1,1)·term·1e-5       tiny = Dcr(2,2)·term·1e-5
 ```
 
 ---
 
-### 3.6 Pre-Peak Overshoot Handling
+### 3.8 Increment Flow (Post-Peak Block)
+
+Each cracked increment steps through (MODE branching at Steps A/F):
+
+```
+  ┌── READ ──────────────────────────────────────────────────┐
+  │  MODE, J_FAIL, Ecr, Ecr_MAX, T rows  ← STATEV           │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP A ─────────────────────────────────────────────────┐
+  │  MODE==1: calcDcr(Ecr_old, Ecr_MAX, J_FAIL)  → Dcr_old   │
+  │  MODE==2: calcDcr_ModeII(Ecr_old, Ecr_MAX)   → Dcr_old   │
+  │  (builds system matrix Y only; scr discarded)            │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP B ─────────────────────────────────────────────────┐
+  │  Y = Dcr_old + Nᵀ·Dco·N                                  │
+  │  dEcr = Y⁻¹ · Nᵀ·Dco·DSTRAN             (solve)         │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP C ─────────────────────────────────────────────────┐
+  │  POST-PEAK OVERSHOOT CHECK:                               │
+  │  MODE==1: if Ecr(J_FAIL)+dEcr(J_FAIL) > 1.05·Ecr_n_ult  │
+  │  MODE==2: if |Ecr(2)|+|dEcr(2)| > 1.05·Ecr_s_ult        │
+  │     → compute fraction α, set PNEWDT=α, continue        │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP D ─────────────────────────────────────────────────┐
+  │  Ecr      = Ecr + dEcr                                    │
+  │  MODE==1: Ecr_MAX = max(Ecr, Ecr_MAX)  component-wise    │
+  │  MODE==2: Ecr_MAX(2) = max(|Ecr(2)|, Ecr_MAX(2))        │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP E ─────────────────────────────────────────────────┐
+  │  MODE==1 ONLY — INTERPENETRATION CLAMP:                   │
+  │  if Ecr(J_FAIL) < 0 → force Ecr(J_FAIL) = 0             │
+  │  MODE==2: skip — shear crack can slide in either direction│
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP F ─────────────────────────────────────────────────┐
+  │  MODE==1: calcDcr(Ecr_new, Ecr_MAX, J_FAIL) → Dcr, scr  │
+  │  MODE==2: calcDcr_ModeII(Ecr_new, Ecr_MAX)  → Dcr, τ_cr │
+  │  (consistent update: eliminates 1-increment lag)         │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP G ─────────────────────────────────────────────────┐
+  │  calcDcocr(Dco, Dcr, N) → Dcocr   (same formula, both)   │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP H ─────────────────────────────────────────────────┐
+  │  WRITE → STATEV (Ecr, Ecr_MAX, dEcr, Dcr_n, scr_n/τ)   │
+  └──────────────────────────────────────────────────────────┘
+              │
+              ▼
+  ┌── STEP I ─────────────────────────────────────────────────┐
+  │  SIG    = SIG + Dcocr · DSTRAN                           │
+  │  DDSDDE = Dcocr           (implicit solver)              │
+  └──────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 3.9 Pre-Peak Overshoot Handling
 
 When the elastic trial stress overshoots the failure surface by more than 5%, the code interpolates the fraction `α` of the increment that lands exactly on the surface and requests ABAQUS cut the step:
 
 ```
   FI
    │
-1.05────────────────── ← overshoot detected
+1.05────────────────── ← overshoot detected (both mode-I and mode-II)
    │                 ╱
-1.0─────────────────╱── ← failure surface (XT)
+1.0─────────────────╱── ← failure surface
    │           ╱   ╱
    │          ╱   ╱
    │         ╱
@@ -339,35 +419,39 @@ When the elastic trial stress overshoots the failure surface by more than 5%, th
 | Slot | Variable | Description |
 |---|---|---|
 | 1 | `isCRACKED` | 0 = intact, 1 = cracked |
-| 2 | `MODE` | Failure mode (1 = tensile) |
+| 2 | `MODE` | Failure mode: **1 = Mode-I (tensile)**, **2 = Mode-II (shear)** |
 | 5 | `L` | Characteristic length `CELENT` at crack initiation |
-| 6–8 | `Ecr_MAX(1:3)` | Max crack strain reached (component J_FAIL = crack opening) |
-| 9–11 | `T(1,:)` | SPRIND eigenvector row 1 (stored as-is, global frame) |
-| 12–14 | `T(2,:)` | SPRIND eigenvector row 2 |
-| 15–17 | `T(3,:)` | SPRIND eigenvector row 3 |
+| 6–8 | `Ecr_MAX(1:3)` | Mode-I: max Ecr component-wise. Mode-II: `Ecr_MAX(2)` = max(\|Ecr_s\|) |
+| 9–11 | `T(1,:)` | Crack-frame row 1. Mode-I: SPRIND eigenvector. Mode-II: coordinate axis (crack normal) |
+| 12–14 | `T(2,:)` | Crack-frame row 2 — sliding direction |
+| 15–17 | `T(3,:)` | Crack-frame row 3 — secondary direction |
 | 18–20 | `Ecr(1:3)` | Current crack strain |
 | 21–23 | `dEcr(1:3)` | Crack strain increment this step |
-| 24 | `Dcr_n` | `Dcr(J_FAIL,J_FAIL)` — normal crack stiffness |
-| 25 | `scr_n` | Normal crack traction (post-processing only) |
-| 26 | `J_FAIL` | Index of max principal stress eigenvector (1, 2, or 3) |
+| 24 | `Dcr_n` | `Dcr(J_FAIL,J_FAIL)` — primary crack stiffness |
+| 25 | `scr` | Crack traction along primary direction (post-processing only) |
+| 26 | `J_FAIL` | Primary crack strain index: **1 for Mode-I** (normal), **2 for Mode-II** (sliding) |
 
-### Material Properties (NPROPS = 5)
+### Material Properties (NPROPS = 5 to 7)
 
-| Slot | Symbol | Description |
-|---|---|---|
-| 1 | `E` | Young's modulus |
-| 2 | `ν` | Poisson's ratio |
-| 3 | `GIc` | Mode-I fracture energy |
-| 4 | `XT` | Tensile strength (peak stress) |
-| 5 | `INDEX` | Failure criterion: 0 = Max Principal Stress |
+| Slot | Symbol | Description | Default |
+|---|---|---|---|
+| 1 | `E` | Young's modulus | — |
+| 2 | `ν` | Poisson's ratio | — |
+| 3 | `GIc` | Mode-I fracture energy | — |
+| 4 | `XT` | Tensile strength (Mode-I peak) | — |
+| 5 | `INDEX` | 0 = Max Principal Stress + Direct Shear | — |
+| 6 | `G2c` | Mode-II fracture energy | `GIc` if NPROPS < 6 |
+| 7 | `XS` | Shear strength (Mode-II peak) | `XT/2` if NPROPS < 7 |
 
-### `.inp` file keyword
+**Existing `.inp` files with `constants=5` automatically use the defaults.** No `.inp` changes required.
+
+### `.inp` file keyword (full 7-prop example)
 
 ```
 *Depvar
      26,
-*User Material, constants=5
-E,  nu,  GIc,  XT,  INDEX
+*User Material, constants=7
+E,  nu,  GIc,  XT,  INDEX,  G2c,  XS
 ```
 
 ---
@@ -378,27 +462,33 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 
 **Expected results for uniaxial tension (analytical):**
 - Failure strain: `εf = XT/E = 100/10000 = 0.01`
-- Ecr_n_ult: `2·GIc/(Leff·XT) = 2·1/(1·100) = 0.02`
+- `Ecr_n_ult = 2·GIc/(Leff·XT) = 2·1/(1·100) = 0.02`
 - Total failure displacement: `0.01 + 0.02 = 0.03 m`
+
+**Expected results for shear (ν=0.3, XS=XT/2=50, G=3846, G2c=GIc=1 defaults):**
+- Mode-II initiates at S12 = 50 MPa
+- `Ecr_s_ult = 2·G2c/(Leff·XS) = 2·1/(1·50) = 0.04`
+- `Dcocr(4,4) = G − G²/(slope_soft_II + G) = 3846 − 3846²/2596 = −1854` (softening ✓)
+- Total failure shear strain: `γ12_fail ≈ 0.040`
 
 ### Isotropic 1-crack tests (no unloading)
 
-| # | Input File | Load Direction | Expected Failure Stress | Status |
-|---|---|---|---|---|
-| T-1 | `plus11_iso.inp` | +X tension (S11) | 100 MPa | ✅ Running |
-| T-2 | `plus22_iso.inp` | +Y tension (S22) | 100 MPa | ✅ BCs fixed 06/11/2026 |
-| T-3 | `tension33_iso.inp` | +Z tension (S33) | 100 MPa | Not tested |
-| S-1 | `simpshear12_iso.inp` | Simple shear 12 (γ12) | τ = XT·G/E | ⚠ Shear not degrading |
-| S-2 | `pureshear12_iso.inp` | Pure shear 12 (S12) | 100 MPa (principal) | ⚠ Shear not degrading |
+| # | Input File | Load Direction | Expected Failure Stress | Mode | Status |
+|---|---|---|---|---|---|
+| T-1 | `plus11_iso.inp` | +X tension (S11) | 100 MPa | Mode-I | ✅ Running |
+| T-2 | `tension22_iso.inp` | +Y tension (S22) | 100 MPa | Mode-I | Not tested |
+| T-3 | `tension33_iso.inp` | +Z tension (S33) | 100 MPa | Mode-I | Not tested |
+| S-12s | `simpshear12_iso.inp` | Simple shear 12 (γ12) | 50 MPa (XS default) | Mode-II | ⬜ Pending verification |
+| S-12p | `pureshear12_iso.inp` | Pure shear 12 (S12) | 50 MPa (XS default) | Mode-II | ⬜ Pending verification |
 
 ### Metrics tracked per test
 
 | Metric | How measured |
 |---|---|
 | Run time | Wall clock, noted in this table |
-| Peak stress | Must match `XT` from material definition |
+| Peak stress | Must match `XT` (Mode-I) or `XS` (Mode-II) from material definition |
 | Failure strain | SDV history output at failure increment |
-| Fracture energy | Area under S-ε curve ≈ `GIc / Leff` |
+| Fracture energy | Area under S-ε curve ≈ `GIc/Leff` or `G2c/Leff` |
 
 ---
 
@@ -412,47 +502,22 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 
 **Proposed fix:** After reaching complete failure (`Ecr_n > Ecr_n_ult`), zero out the rows and columns of `Dcocr` associated with all directions coupled by N, rather than relying on the near-zero `Dcr` to do it numerically.
 
+**Status:** Deferred. Will address after shear tests are validated.
+
 ---
 
 ### Issue 2 — Shear stress not degrading under shear loading
 
-**Symptom:** Under simple shear (γ12 applied) or pure shear, the crack initiates at 45° correctly, but `S12` does not soften — it either remains constant or continues growing.
+**Status: RESOLVED by Mode-II implementation (06/11/2026).**
 
-**Root cause:** Under shear loading, the max principal stress is at 45°, so the crack opens in mode-I at 45°. Analysing the Dcocr formula for this geometry:
+**Root cause (for reference):** Under shear loading, the max principal stress is at 45°, so the crack opened in Mode-I at 45°. The 45° crack could only reduce S12 by ~45% due to the geometry of the N matrix — it could never reach zero. At residual, `Dcocr(4,4)` actually *increased* to 2748, making softening impossible.
 
-```
-  Shear loading (γ12):                  Crack at 45°:
-                                          n = [1/√2, 1/√2, 0]
-     ┌─────────┐
-  ───┤  γ12→   ├───     Principal stresses: σ₁ = +τ (at 45°)
-     │         │                            σ₂ = -τ (at 135°)
-     └─────────┘
-
-  N(:,1) = [0.5, 0.5, 0, 1, 0, 0]   (maps crack opening to ε11, ε22, γ12)
-
-  Dcocr(4,4) = G - G² / (Dcr₁₁ + Nᵀ·Dco·N)₁₁
-             = G - G² / (slope_soft + 13461)
-
-  During LOADING  (slope_soft = -5000): Dcocr(4,4) = 3846 - 1749 = 2097
-  At RESIDUAL     (Dcr → 0):           Dcocr(4,4) = 3846 - 1099 = 2748
-```
-
-The shear stiffness **does not reach zero** because the crack opens at 45° (mode-I), not parallel to the shear plane (mode-II). The current single-crack model can only reduce S12 by approximately 45% — it cannot fully degrade shear to zero.
-
-**Proposed fix — Mode-II shear tracking:**  
-Activate the crack-sliding components `Ecr_s1, Ecr_s2` with their own TSL (mode-II fracture energy `GIIc`). For the 45° crack under shear: the shear sliding component `dEcr(2)` (along T(2,:) = [-1/√2, 1/√2, 0]) also becomes active. Adding a mode-II TSL for `Dcr(j,j)` (j ≠ J_FAIL) would allow the shear to degrade fully.
-
-**Alternative fix — Direct shear failure criterion:**  
-For pure shear cases, detect shear failure directly (`τ12 ≥ XS`) and orient the crack normal perpendicular to the shear plane (not at 45°). This requires an additional failure criterion index (INDEX = 1 for Max Shear).
-
----
-
-### Issue 3 — plus22_iso.inp had wrong boundary conditions (FIXED 06/11/2026)
-
-The original file applied x-displacement (DOF 1) to the x=1 face while locking the x=0 face in x — effectively a second x-tension test, not y-tension. Fixed by:
-- Loading: y=1 face (nodes 1,3,5,7) displaced in DOF 2 by 0.025
-- Fixed end: y=0 face (nodes 2,4,6,8) fully fixed in DOF 2
-- Anti-rigid-body: nodes 6,8 in DOF 1; node 8 in DOF 3
+**Fix:** Introduced Mode-II with coordinate-aligned crack orientation. When |S12| (or |S13|, |S23|) reaches XS before σ₁ reaches XT, Mode-II activates instead:
+- Crack frame: T(2,:) = sliding direction (e.g. [0,1,0] for S12)
+- N(:,2) = [0,0,0,1,0,0] → `Ecr_s` maps directly to γ12
+- System matrix: `Y(2,2) = slope_soft_II + G = −1250 + 3846 = 2596`
+- Cracked shear tangent: `Dcocr(4,4) = G − G²/Y = 3846 − 5706 = −1854` (shear DECREASES ✓)
+- At complete failure: `Y(2,2) → G` → `Dcocr(4,4) → 0` ✓
 
 ---
 
@@ -460,10 +525,37 @@ The original file applied x-displacement (DOF 1) to the x=1 face while locking t
 
 | Date | File(s) Changed | Change | Effect |
 |---|---|---|---|
+| 06/11/2026 | `meka_formulation_AFEM8.for` | Added Mode-II TSL: `calcDcr_ModeII`, mode-determination logic (FI_shear vs FI_mode1), coordinate-aligned crack frames for S12/S13/S23, STATEV(2)=MODE, J_FAIL=2 for Mode-II, Step C/D/E mode-branching, pre-peak Mode-II overshoot, G2c/XS PROPS with defaults, PENALTY Dcr(1,1)=1e3·E | Shear degradation now works; S12/S13/S23 reach zero at Ecr_s_ult |
+| 06/11/2026 | `README.MD` | Updated for Mode-II: theory §3.3–3.5, PROPS table (G2c/XS), STATEV(2) meaning, test-case table, Issue 2 closed | — |
 | 06/10/2026 | `meka_formulation_AFEM8.for` (new), `main_UD_inc8.for` (new) | Created AFEM8: ported overshoot logic from `logic-2d.for`, added `PNEWDT`, double `calcDcr` call, interpenetration clamp | AFEM7 archived |
 | 06/10/2026 | `meka_formulation_AFEM8.for` | Added `J_FAIL` tracking: parametric crack-normal index from SPRIND output, stored in `STATEV(26)`. `calcDcr` updated to accept `J_FAIL` and set `Dcr(J_FAIL,J_FAIL)` as normal stiffness. Off-diagonal shear: `Dcr(j,j) = Dcr(J_FAIL,J_FAIL)·term·1e-5` | Fixes hardcoded index-1 assumption |
 | 06/10/2026 | `meka_formulation_AFEM8.for` | `STATEV(24)` (Dcr normal) uncommented and updated to `Dcr(J_FAIL,J_FAIL)` | Correct SDV output |
-| 06/10/2026 | `plus11_iso.inp`, `plus22_iso.inp`, `simpshear12_iso.inp`, `pureshear12_iso.inp` | `*Depvar` increased from 25 to 26 | Matches new STATEV layout |
-| 06/11/2026 | `plus22_iso.inp` | Corrected boundary conditions for y-tension. Fixed DOFs, loading face (nodes 1,3,5,7), load direction DOF 2. Removed spurious x-face constraint. | Eliminated twisting/abort |
+| 06/10/2026 | `plus11_iso.inp`, `tension22_iso.inp`, `simpshear12_iso.inp`, `pureshear12_iso.inp` | `*Depvar` increased from 25 to 26 | Matches new STATEV layout |
 | 02/17/2026 | `meka_formulation_AFEM7.for` | Fixed `Leff = 1.0*L` (was commented out → Leff=0 → infinite softening slope → stress plateau). Fixed `*Depvar 12→25`. Removed dead STATEV reads. | Stress now softens in 11-tension |
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
