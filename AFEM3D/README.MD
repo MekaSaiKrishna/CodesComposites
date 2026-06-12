@@ -24,7 +24,7 @@
 This project implements **incremental progressive damage** for isotropic materials in ABAQUS using the **Smeared Crack Approach (SCA)**. Rather than inserting a discrete crack surface, the crack is smeared over the element volume using a characteristic length `Leff`, and its effect on the stress-strain response is captured through a modified continuum tangent `Dcocr`.
 
 **Compatible element:** C3D8 (3D 8-node brick, linear).  
-**Failure criteria (current):** Max Principal Stress (Mode-I) + Direct Shear Stress (Mode-II).  
+**Failure criteria (current):** Max Normal Stress on coord. axes (Mode-I) + Direct Shear Stress (Mode-II).  
 **Material scope (current):** Isotropic only.
 
 ---
@@ -44,7 +44,7 @@ This project implements **incremental progressive damage** for isotropic materia
 
 | File | Description | Status | Last Debugged |
 |---|---|---|---|
-| `meka_formulation_AFEM8.for` | **ACTIVE.** AFEM7 + PNEWDT overshoot, J_FAIL tracking, double `calcDcr` call, interpenetration clamp, near-singular guards, Mode-II shear TSL | Active | 06/11/2026 |
+| `meka_formulation_AFEM8.for` | **ACTIVE.** AFEM7 + PNEWDT overshoot, unified `calcDcr(MODE,...)`, Max Normal Stress criterion (coord-aligned, no SPRIND), Mode-II shear TSL, interpenetration clamp, near-singular guards | Active | 06/12/2026 |
 | `meka_formulation_AFEM7.for` | Incremental SCA, unloading/reloading, Bazant regularization. No overshoot detection. | Archived | 02/17/2026 |
 | `meka_formulation_AFEM6.for` | Incremental SCA with global (not local) overshoot cutback | Archived | 11/12/2025 |
 | `meka_formulation_AFEM5.for` | Incremental SCA, fixed crack, multiple criteria, full Jacobian | Archived | 01/29/2026 |
@@ -146,14 +146,14 @@ Mode-I crack cannot have mode-II sliding, and mode-II crack cannot have mode-I o
 At every intact-element increment, two failure indices are computed from the elastic trial stress:
 
 ```
-  FI_mode1  =  max[ PRINS(i) / XT ]   for PRINS(i) > 0
-              (max-principal-stress criterion — ABAQUS SPRIND)
+  FI_mode1  =  max[ SIG(i) / XT ]   for SIG(i) > 0  (i = 1,2,3)
+              (max normal stress on coordinate axes — no SPRIND)
 
   FI_shear  =  max( |S12|, |S13|, |S23| ) / XS
-              (direct shear criterion — no principal stress rotation)
+              (direct shear criterion)
 ```
 
-Failure initiates when either FI ≥ 1. The mode that reaches its criterion **first** (higher FI when both ≥ 1, or whichever crosses 1 first) is locked in permanently for that element.
+Failure initiates when either FI ≥ 1. The mode with the higher FI (when both ≥ 1) is locked in permanently for that element.
 
 ```
   FI_shear ≥ 1 AND FI_shear > FI_mode1  →  MODE-II  (shear)
@@ -162,11 +162,21 @@ Failure initiates when either FI ≥ 1. The mode that reaches its criterion **fi
 
 `STATEV(2) = MODE` records this choice at initiation and never changes.
 
+The coordinate-aligned crack frame for **Mode-I** is set from the governing direction `INDEX_NORMAL` (the index i that maximises SIG(i)/XT):
+
+```
+  INDEX_NORMAL = 1  →  T(1,:)=[1,0,0]  T(2,:)=[0,1,0]  T(3,:)=[0,0,1]
+  INDEX_NORMAL = 2  →  T(1,:)=[0,1,0]  T(2,:)=[0,0,1]  T(3,:)=[1,0,0]
+  INDEX_NORMAL = 3  →  T(1,:)=[0,0,1]  T(2,:)=[1,0,0]  T(3,:)=[0,1,0]
+```
+
+`J_FAIL = 1` always for Mode-I (crack normal = T(1,:), crack opening = Ecr(1)).
+
 ---
 
 ### 3.5 Mode-II Crack Orientation (Coordinate-Aligned)
 
-Unlike mode-I (which uses SPRIND eigenvectors), the mode-II crack frame is fixed to coordinate axes aligned with the dominant shear component:
+Both Mode-I and Mode-II crack frames are fixed to coordinate axes (no SPRIND eigenvectors). For Mode-II the dominant shear component determines the frame:
 
 ```
    Dominant      T(1,:) = crack normal    T(2,:) = sliding dir    T(3,:) = secondary
@@ -243,9 +253,8 @@ Each cracked increment steps through (MODE branching at Steps A/F):
               │
               ▼
   ┌── STEP A ─────────────────────────────────────────────────┐
-  │  MODE==1: calcDcr(Ecr_old, Ecr_MAX, J_FAIL)  → Dcr_old   │
-  │  MODE==2: calcDcr_ModeII(Ecr_old, Ecr_MAX)   → Dcr_old   │
-  │  (builds system matrix Y only; scr discarded)            │
+  │  calcDcr(MODE, Ecr_old, Ecr_MAX, ...)  → Dcr_old          │
+  │  (builds system matrix Y only; scr_n discarded)          │
   └──────────────────────────────────────────────────────────┘
               │
               ▼
@@ -278,8 +287,7 @@ Each cracked increment steps through (MODE branching at Steps A/F):
               │
               ▼
   ┌── STEP F ─────────────────────────────────────────────────┐
-  │  MODE==1: calcDcr(Ecr_new, Ecr_MAX, J_FAIL) → Dcr, scr  │
-  │  MODE==2: calcDcr_ModeII(Ecr_new, Ecr_MAX)  → Dcr, τ_cr │
+  │  calcDcr(MODE, Ecr_new, Ecr_MAX, ...) → Dcr, scr_n       │
   │  (consistent update: eliminates 1-increment lag)         │
   └──────────────────────────────────────────────────────────┘
               │
@@ -334,7 +342,7 @@ When the elastic trial stress overshoots the failure surface by more than 5%, th
 | 2 | `MODE` | Failure mode: **1 = Mode-I (tensile)**, **2 = Mode-II (shear)** |
 | 5 | `L` | Characteristic length `CELENT` at crack initiation |
 | 6–8 | `Ecr_MAX(1:3)` | Mode-I: max Ecr component-wise. Mode-II: `Ecr_MAX(2)` = max(\|Ecr_s\|) |
-| 9–11 | `T(1,:)` | Crack-frame row 1. Mode-I: SPRIND eigenvector. Mode-II: coordinate axis (crack normal) |
+| 9–11 | `T(1,:)` | Crack-frame row 1 — crack normal (coordinate axis for both Mode-I and Mode-II) |
 | 12–14 | `T(2,:)` | Crack-frame row 2 — sliding direction |
 | 15–17 | `T(3,:)` | Crack-frame row 3 — secondary direction |
 | 18–20 | `Ecr(1:3)` | Current crack strain |
@@ -351,7 +359,7 @@ When the elastic trial stress overshoots the failure surface by more than 5%, th
 | 2 | `ν` | Poisson's ratio | — |
 | 3 | `GIc` | Mode-I fracture energy | — |
 | 4 | `XT` | Tensile strength (Mode-I peak) | — |
-| 5 | `INDEX` | 0 = Max Principal Stress + Direct Shear | — |
+| 5 | `INDEX` | 0 = Max Normal Stress on coord. axes + Direct Shear | — |
 | 6 | `G2c` | Mode-II fracture energy | `GIc` if NPROPS < 6 |
 | 7 | `XS` | Shear strength (Mode-II peak) | `XT/2` if NPROPS < 7 |
 
@@ -373,9 +381,9 @@ E,  nu,  GIc,  XT,  INDEX,  G2c,  XS
 All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: E=10000, ν=0, GIc=1, XT=100, INDEX=0 (unless noted). Applied displacement = 0.025 m.
 
 **Expected results for uniaxial tension (analytical):**
-- Failure strain: `εf = XT/E = 100/10000 = 0.01`
+- Crack initiates at `ε = XT/E = 100/10000 = 0.01`, `σ = 100 MPa`
 - `Ecr_n_ult = 2·GIc/(Leff·XT) = 2·1/(1·100) = 0.02`
-- Total failure displacement: `0.01 + 0.02 = 0.03 m`
+- Total failure displacement: **`0.02 m`** — during softening, elastic strain decreases to zero as σ→0; the 0.01 elastic extension at initiation is not additive (it shrinks back to zero)
 
 **Expected results for shear (ν=0.3, XS=XT/2=50, G=3846, G2c=GIc=1 defaults):**
 - Mode-II initiates at S12 = 50 MPa
@@ -433,23 +441,11 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 
 ---
 
-### Bug 1 — `BL_II` Bazant snap-back limit uses `E` instead of `G` [UNRESOLVED]
+### Bug 1 — `BL_II` Bazant snap-back limit uses `E` instead of `G` [RESOLVED 06/12/2026]
 
-**File / Line:** `meka_formulation_AFEM8.for`, line 127.
+**Fix:** `BL_II = 2.0D0*G2c*G/taucr0**2` (G computed on line 100). Print label also corrected to `'   2*G2c*G/XS^2 = '`.
 
-**Code (wrong):**
-```fortran
-BL_II = 2.0D0*G2c*E / taucr0**2
-```
-**Should be:**
-```fortran
-G_shear = 0.5D0*E / (1.0D0 + nu)
-BL_II   = 2.0D0*G2c*G_shear / taucr0**2
-```
-
-**Why:** The Mode-II Bazant limit is derived from requiring no snap-back in the shear TSL: `|slope_soft_II| ≤ G` (shear modulus, not Young's modulus). Rearranging: `Leff ≤ 2·G2c·G / XS²`. Using E instead of G overestimates the limit by a factor of `E/G = 2(1+ν)`. For ν=0.3 this is 2.6×, so elements can be 2.6× too large without triggering the warning — the snap-back guard is essentially inactive for typical meshes.
-
-**Impact:** Moderate. Simulation will not abort even when the element size causes a snap-back in the Mode-II TSL, leading to non-physical negative tangent stiffness that may cause convergence failures without a meaningful error message.
+**Why it mattered:** The Mode-II Bazant limit is derived from requiring no snap-back in the shear TSL: `|slope_soft_II| ≤ G` (shear modulus, not Young's modulus). Using E instead of G overestimates the limit by a factor of `E/G = 2(1+ν)` — for ν=0.3 this is 2.6×, so elements can be 2.6× too large without triggering the warning.
 
 ---
 
@@ -467,22 +463,11 @@ BL_II   = 2.0D0*G2c*G_shear / taucr0**2
 
 ---
 
-### Bug 3 — Mode-II overshoot `alpha` uses `Ecr_MAX(2)` instead of `ABS(Ecr(2))` [UNRESOLVED]
+### Bug 3 — Mode-II overshoot `alpha` uses `Ecr_MAX(2)` instead of `ABS(Ecr(2))` [RESOLVED 06/12/2026]
 
-**File / Lines:** `meka_formulation_AFEM8.for`, lines 333–336.
+**Fix:** Numerator changed to `Ecr_s_ult - ABS(Ecr(2))` in Step C of the post-peak block.
 
-**Code (wrong):**
-```fortran
-alpha = MAX((Ecr_s_ult - Ecr_MAX(2)) / ABS(dEcr(2)), 0.10D0)
-```
-**Should be:**
-```fortran
-alpha = MAX((Ecr_s_ult - ABS(Ecr(2))) / ABS(dEcr(2)), 0.10D0)
-```
-
-**Why:** `alpha` should represent the fraction of the increment that takes the crack from its **current** state `Ecr(2)` to `Ecr_s_ult`. When the crack has unloaded (slid back), `ABS(Ecr(2)) < Ecr_MAX(2)`, so the numerator `Ecr_s_ult - Ecr_MAX(2)` is smaller than the true available travel `Ecr_s_ult - ABS(Ecr(2))`, giving an alpha that is too small and cutting the step more aggressively than needed.
-
-**Impact:** Minor in typical monotonic loading (where Ecr_MAX ≈ ABS(Ecr)), but meaningful under load reversal — forces unnecessarily small time steps near the failure limit.
+**Why it mattered:** `alpha` represents the fraction of the increment that takes the crack from its **current** state `Ecr(2)` to `Ecr_s_ult`. When the crack has unloaded (slid back), `ABS(Ecr(2)) < Ecr_MAX(2)`, so using Ecr_MAX(2) in the numerator cut the step more aggressively than needed.
 
 ---
 
@@ -511,19 +496,9 @@ IF (ABS(detY) .LT. SING_TOL*(ABS(Y(1,1))*ABS(Y(2,2))*ABS(Y(3,3)) + 1.0D0)) THEN
 
 ---
 
-### Bug 6 — Mode-II `Dcr(3,3)` secondary shear is physically unjustified [UNRESOLVED]
+### Bug 6 — Mode-II `Dcr(3,3)` secondary shear is physically unjustified [RESOLVED 06/12/2026]
 
-**File / Lines:** `meka_formulation_AFEM8.for`, line 613 (inside `calcDcr_ModeII`).
-
-**Code:**
-```fortran
-Dcr(3,3) = Dcr(2,2) * term * 1.0D-5
-```
-where `term = 1/(2(1+ν))`.
-
-**Why:** This formula was copied from `calcDcr` (Mode-I), where the `term` factor approximates the shear coupling from the isotropic elasticity. For a Mode-II crack, `T(3,:)` is the secondary shear direction (perpendicular to both the crack normal and the sliding direction). There is no physical mechanism that couples the secondary shear to the primary sliding response — `Dcr(3,3)` should be zero (or a small penalty). A non-zero value introduces a spurious stiffness in the secondary shear direction that grows and decays with `Dcr(2,2)`, creating off-axis residual stresses during softening.
-
-**Impact:** Minor. Off-axis stresses are very small (`1e-5 × term × Dcr(2,2)`), but they may contribute to the spurious twisting described in Issue 1.
+**Fix:** `Dcr(3,3) = 0.0D0` in the unified `calcDcr` subroutine (both MODE=1 and MODE=2 branches). The old `Dcr(2,2) * term * 1e-5` value was a leftover copy from the Mode-I shear coupling approximation and has no physical basis in Mode-II.
 
 ---
 
@@ -531,6 +506,7 @@ where `term = 1/(2(1+ν))`.
 
 | Date | File(s) Changed | Change | Effect |
 |---|---|---|---|
+| 06/12/2026 | `meka_formulation_AFEM8.for`, `README.MD` | Refactor: replaced SPRIND principal-stress criterion (Mode-I) with Max Normal Stress on coordinate axes. Unified `calcDcr_ModeI` + `calcDcr_ModeII` into single `calcDcr(MODE,...)`. J_FAIL=1 always for Mode-I. Fixed Bug 1 (BL_II label E→G), Bug 3 (Mode-II alpha numerator ABS(Ecr) not Ecr_MAX), Bug 6 (Dcr(3,3)=0). Corrected expected failure displacement from 0.03→0.02 m. | Bugs 2, 4, 5 remain open. |
 | 06/12/2026 | `README.MD` | Code review of `meka_formulation_AFEM8.for`. Identified 6 bugs (see §6): BL_II uses E not G; Step C no RETURN after PNEWDT; Mode-II alpha uses Ecr_MAX not ABS(Ecr); STATEV(3,4) unused; near-singular guard too loose for Mode-II; Dcr(3,3) secondary shear unjustified. No code changed. | Bugs documented; fixes deferred pending shear test results. |
 | 06/11/2026 | `meka_formulation_AFEM8.for` | Added Mode-II TSL: `calcDcr_ModeII`, mode-determination logic (FI_shear vs FI_mode1), coordinate-aligned crack frames for S12/S13/S23, STATEV(2)=MODE, J_FAIL=2 for Mode-II, Step C/D/E mode-branching, pre-peak Mode-II overshoot, G2c/XS PROPS with defaults, PENALTY Dcr(1,1)=1e3·E | Shear degradation now works; S12/S13/S23 reach zero at Ecr_s_ult |
 | 06/11/2026 | `README.MD` | Updated for Mode-II: theory §3.3–3.5, PROPS table (G2c/XS), STATEV(2) meaning, test-case table, Issue 2 closed | — |
