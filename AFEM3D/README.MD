@@ -1,96 +1,8 @@
-# AFEM3D — Abaqus UMAT: Smeared Crack Approach for Progressive Damage
-
-## Overview
-
-UMAT subroutines implementing **incremental progressive damage** using the **Smeared Crack Approach (SCA)** for composite materials. Currently implemented for **isotropic** materials; orthotropic (composite) extension is in progress via `meka_formulation_MAXS.for`.
-
-Compatible element type: **C3D8** (3D 8-node brick).
-
----
-
-## Active Version
-
-> **`meka_formulation_AFEM7.for`** — current active formulation (last debugged: 02/17/2026)
->
-> Entry point: **`main_UD_inc.for`** (incremental UMAT wrapper, calls AFEM7)
-
----
-
-## File Summary
-
-### Entry Points (Main UMAT Wrappers)
-
-| File | Description | Last Debugged |
-|---|---|---|
-| `main_UD_inc.for` | **Active entry point.** Incremental UMAT wrapper; calls `meka_formulation_AFEM7.for` | 01/29/2026 |
-| `main_UD_tot.for` | Total-strain UMAT wrapper; calls `meka_formulation_AFEM5.for` | 01/29/2026 |
-| `main_UD_elas.for` | Elasticity-only UMAT wrapper; calls `meka_formulation_elas.for` | 01/29/2026 |
-
----
-
-### Formulation Files (Isotropic SCA — Evolutionary Sequence)
-
-| File | Description | Status | Last Debugged |
-|---|---|---|---|
-| `meka_formulation_AFEM7.for` | **CURRENT ACTIVE.** Incremental SCA with Newton-Raphson local crack strain update, quadruple precision, unloading/reloading, Bazant regularization | Active | 02/17/2026 |
-| `meka_formulation_AFEM5.for` | Incremental SCA; fixed crack orientation, multiple failure criteria (Max Principal Stress / Max Stress), full Jacobian | Archived | 01/29/2026 |
-| `meka_formulation_AFEM5v1.for` | Cleaner-formatted version of AFEM5 | Archived | — |
-| `meka_formulation_AFEM5 - Copy.for` | Mid-development backup of AFEM5 | Archived | — |
-| `meka_formulation_AFEM6.for` | Incremental SCA with overshoot cutback to peak; global softening slope | Archived | 11/12/2025 |
-| `meka_formulation_AFEM4.for` | Total SCA; adds nondimensional energy ratio parameter (STATEV 9) and element length storage (STATEV 10) | Archived | — |
-| `meka_formulation_AFEM3.for` | Total SCA; adds secant stiffness tracking (STATEV 8) | Archived | 03/09/2025 |
-| `meka_formulation_AFEM2.for` | Total SCA; improved Jacobian and element size regularization via characteristic length | Archived | 02/26/2025 |
-| `meka_formulation_AFEM.for` | **Original.** Total SCA isotropic (tension only), 3-zone traction-separation law | Archived | 01/31/2025 |
-
----
-
-### Orthotropic Formulation
-
-| File | Description | Status | Last Debugged |
-|---|---|---|---|
-| `meka_formulation_MAXS.for` | Orthotropic total SCA with 9-mode Max Stress failure criteria (fiber/matrix tension, compression, 3 shear planes). Quad precision Newton-Raphson. | In development | 01/31/2025 |
-| `meka_formulation_elas.for` | Pure isotropic/orthotropic elasticity (no damage) | Support | 11/17/2025 |
-
----
-
-### Numerical Utilities
-
-| File | Description |
-|---|---|
-| `matrix_inverse.for` | LU decomposition, matrix inversion, and linear system solver in both double (`REAL*8`) and quadruple (`REAL*16`) precision. Used by all formulation files. Based on Numerical Recipes. |
-| `standard_support.for` | Abaqus wrapper utilities: `mysprind()` (principal stress eigenvalues), `myExit()` |
-
----
-
-## Test Cases
-
-See [CHECKLIST.MD](CHECKLIST.MD) for the full test matrix.
-
-Metrics tracked per test:
-- Simulation run time
-- Peak stress (must match defined material strength)
-- Failure strain
-- Area under stress-strain curve (fracture energy)
-
----
-
-## Key Technical Features
-
-| Feature | Detail |
-|---|---|
-| Failure criteria | Max Principal Stress (isotropic), Max Stress (orthotropic, 9 modes) |
-| Crack orientation | Fixed at initiation; tracked via transformation matrix |
-| Regularization | Bazant element size check; characteristic length `L` stored in STATEV |
-| Numerical stability | Newton-Raphson iteration for consistent crack strain update (AFEM7) |
-| Precision | Quadruple precision (`REAL*16`) in critical NR solver subroutines |
-| Unloading/reloading | Fully tracked via zone flags and stored max crack strain (AFEM7) |
-
-
 # AFEM3D — ABAQUS UMAT: Incremental Smeared Crack Approach
 
 > **Active formulation:** `meka_formulation_AFEM8.for`  
 > **Entry point:** `main_UD_inc8.for`  
-> **Last debugged:** 06/11/2026  
+> **Last reviewed:** 06/12/2026  
 > **Contact:** meka1@purdue.edu
 
 ---
@@ -492,15 +404,15 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 
 ---
 
-## 6. Known Issues and Plan of Action
+## 6. Known Issues and Bugs
 
 ### Issue 1 — Spurious twisting / convergence failure at tail end of softening
 
 **Symptom:** Near complete failure (Ecr_n → Ecr_n_ult), the simulation becomes unstable. The element develops spurious off-axis stresses and the job aborts.
 
-**Root cause:** When `Dcr(J_FAIL,J_FAIL) → RES_K = 1e-8` (residual), the shear crack stiffness is set to `Dcr(j,j) = RES_K × term × 1e-5 ≈ 0`. The N matrix has non-zero entries coupling all 6 Voigt components. At near-zero `Dcr`, the Woodbury formula gives `Dcocr ≈ Dco - Dco·N·(Nᵀ·Dco·N)⁻¹·Nᵀ·Dco`, which removes the stress component along the crack normal but still has full off-diagonal coupling. The residual terms drive spurious shear stresses that the implicit solver cannot resolve, causing hourglass-type twisting.
+**Root cause:** When `Dcr(J_FAIL,J_FAIL) → RES_K = 1e-8` (residual), the off-diagonal shear stiffness is set to `Dcr(j,j) = RES_K × term × 1e-5 ≈ 0`. At near-zero `Dcr`, the Woodbury formula gives `Dcocr ≈ Dco - Dco·N·(Nᵀ·Dco·N)⁻¹·Nᵀ·Dco`, which removes the stress component along the crack normal but retains full off-diagonal coupling. The residual terms drive spurious shear stresses that the implicit solver cannot resolve, causing hourglass-type twisting.
 
-**Proposed fix:** After reaching complete failure (`Ecr_n > Ecr_n_ult`), zero out the rows and columns of `Dcocr` associated with all directions coupled by N, rather than relying on the near-zero `Dcr` to do it numerically.
+**Proposed fix:** After reaching complete failure (`Ecr_n > Ecr_n_ult`), zero out the rows and columns of `Dcocr` associated with all directions coupled by N, rather than relying on near-zero `Dcr` to do it numerically.
 
 **Status:** Deferred. Will address after shear tests are validated.
 
@@ -521,10 +433,105 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 
 ---
 
+### Bug 1 — `BL_II` Bazant snap-back limit uses `E` instead of `G` [UNRESOLVED]
+
+**File / Line:** `meka_formulation_AFEM8.for`, line 127.
+
+**Code (wrong):**
+```fortran
+BL_II = 2.0D0*G2c*E / taucr0**2
+```
+**Should be:**
+```fortran
+G_shear = 0.5D0*E / (1.0D0 + nu)
+BL_II   = 2.0D0*G2c*G_shear / taucr0**2
+```
+
+**Why:** The Mode-II Bazant limit is derived from requiring no snap-back in the shear TSL: `|slope_soft_II| ≤ G` (shear modulus, not Young's modulus). Rearranging: `Leff ≤ 2·G2c·G / XS²`. Using E instead of G overestimates the limit by a factor of `E/G = 2(1+ν)`. For ν=0.3 this is 2.6×, so elements can be 2.6× too large without triggering the warning — the snap-back guard is essentially inactive for typical meshes.
+
+**Impact:** Moderate. Simulation will not abort even when the element size causes a snap-back in the Mode-II TSL, leading to non-physical negative tangent stiffness that may cause convergence failures without a meaningful error message.
+
+---
+
+### Bug 2 — Post-peak overshoot (Step C) does not `RETURN` after setting `PNEWDT` [UNRESOLVED]
+
+**File / Lines:** `meka_formulation_AFEM8.for`, lines 329–349.
+
+**What happens:** When an overshoot past `Ecr_n_ult` (Mode-I) or `Ecr_s_ult` (Mode-II) is detected, `PNEWDT` is set to request a step cutback, but execution continues through Steps D–I. The crack strain, Ecr_MAX, and STATEV are all updated using the over-large dEcr. ABAQUS will discard these updates on retry (because PNEWDT < 1), so correctness is preserved, but:
+
+1. All subsequent computation in that call (Step F `calcDcr`, Step G `calcDcocr`, Step H STATEV writes, Step I stress update) is wasted.
+2. The near-singular guard in `calcDcocr` (Step G) may fire and print a spurious WARN message and reduce PNEWDT further, masking the real source of the cutback.
+3. It is inconsistent with the pre-peak block, which immediately `RETURN`s after setting `PNEWDT`.
+
+**Fix:** Add `RETURN` immediately after the `PNEWDT = MIN(PNEWDT, alpha)` line in both the Mode-I and Mode-II branches of Step C.
+
+---
+
+### Bug 3 — Mode-II overshoot `alpha` uses `Ecr_MAX(2)` instead of `ABS(Ecr(2))` [UNRESOLVED]
+
+**File / Lines:** `meka_formulation_AFEM8.for`, lines 333–336.
+
+**Code (wrong):**
+```fortran
+alpha = MAX((Ecr_s_ult - Ecr_MAX(2)) / ABS(dEcr(2)), 0.10D0)
+```
+**Should be:**
+```fortran
+alpha = MAX((Ecr_s_ult - ABS(Ecr(2))) / ABS(dEcr(2)), 0.10D0)
+```
+
+**Why:** `alpha` should represent the fraction of the increment that takes the crack from its **current** state `Ecr(2)` to `Ecr_s_ult`. When the crack has unloaded (slid back), `ABS(Ecr(2)) < Ecr_MAX(2)`, so the numerator `Ecr_s_ult - Ecr_MAX(2)` is smaller than the true available travel `Ecr_s_ult - ABS(Ecr(2))`, giving an alpha that is too small and cutting the step more aggressively than needed.
+
+**Impact:** Minor in typical monotonic loading (where Ecr_MAX ≈ ABS(Ecr)), but meaningful under load reversal — forces unnecessarily small time steps near the failure limit.
+
+---
+
+### Bug 4 — `STATEV(3)` and `STATEV(4)` are allocated but never used [UNRESOLVED]
+
+**File / Lines:** `meka_formulation_AFEM8.for`, header comment and `.inp` files.
+
+**What happens:** The STATEV layout jumps from slot 2 (MODE) to slot 5 (L). Slots 3 and 4 are never written or read anywhere in the subroutine. They consume two slots in every element's state variable storage.
+
+**Impact:** Minor (wasted memory, documentation gap). Proposed use: slot 3 = scalar damage variable `d` (0→1) for post-processing; slot 4 = cumulative fracture energy `G_released/GIc` for a normalised damage metric.
+
+---
+
+### Bug 5 — Near-singular guard in Step B may not trigger for Mode-II [UNRESOLVED]
+
+**File / Lines:** `meka_formulation_AFEM8.for`, lines 314–321.
+
+**Code:**
+```fortran
+IF (ABS(detY) .LT. SING_TOL*(ABS(Y(1,1))*ABS(Y(2,2))*ABS(Y(3,3)) + 1.0D0)) THEN
+```
+
+**Why it fails for Mode-II:** In Mode-II, `Y(1,1) ≈ Dcr(1,1) + ... ≈ 1e3·E ≈ 10⁷`. The relative tolerance denominator becomes `SING_TOL × 10⁷ × |Y(2,2)| × |Y(3,3)|`. When Y(2,2) is small (near failure) but Y(1,1) is large (penalty), the product can still be large, so the threshold is large and a genuinely near-singular Y may slip through undetected. The same check in `calcDcocr` (Step G) has the same problem.
+
+**Impact:** Minor–Moderate. Near-singular Y at the tail of Mode-II softening may not trigger the `PNEWDT = 0.5` cutback, potentially causing `matrixInverse` to produce garbage results and the job to stall or produce nonsense stresses.
+
+---
+
+### Bug 6 — Mode-II `Dcr(3,3)` secondary shear is physically unjustified [UNRESOLVED]
+
+**File / Lines:** `meka_formulation_AFEM8.for`, line 613 (inside `calcDcr_ModeII`).
+
+**Code:**
+```fortran
+Dcr(3,3) = Dcr(2,2) * term * 1.0D-5
+```
+where `term = 1/(2(1+ν))`.
+
+**Why:** This formula was copied from `calcDcr` (Mode-I), where the `term` factor approximates the shear coupling from the isotropic elasticity. For a Mode-II crack, `T(3,:)` is the secondary shear direction (perpendicular to both the crack normal and the sliding direction). There is no physical mechanism that couples the secondary shear to the primary sliding response — `Dcr(3,3)` should be zero (or a small penalty). A non-zero value introduces a spurious stiffness in the secondary shear direction that grows and decays with `Dcr(2,2)`, creating off-axis residual stresses during softening.
+
+**Impact:** Minor. Off-axis stresses are very small (`1e-5 × term × Dcr(2,2)`), but they may contribute to the spurious twisting described in Issue 1.
+
+---
+
 ## 7. Debug Log
 
 | Date | File(s) Changed | Change | Effect |
 |---|---|---|---|
+| 06/12/2026 | `README.MD` | Code review of `meka_formulation_AFEM8.for`. Identified 6 bugs (see §6): BL_II uses E not G; Step C no RETURN after PNEWDT; Mode-II alpha uses Ecr_MAX not ABS(Ecr); STATEV(3,4) unused; near-singular guard too loose for Mode-II; Dcr(3,3) secondary shear unjustified. No code changed. | Bugs documented; fixes deferred pending shear test results. |
 | 06/11/2026 | `meka_formulation_AFEM8.for` | Added Mode-II TSL: `calcDcr_ModeII`, mode-determination logic (FI_shear vs FI_mode1), coordinate-aligned crack frames for S12/S13/S23, STATEV(2)=MODE, J_FAIL=2 for Mode-II, Step C/D/E mode-branching, pre-peak Mode-II overshoot, G2c/XS PROPS with defaults, PENALTY Dcr(1,1)=1e3·E | Shear degradation now works; S12/S13/S23 reach zero at Ecr_s_ult |
 | 06/11/2026 | `README.MD` | Updated for Mode-II: theory §3.3–3.5, PROPS table (G2c/XS), STATEV(2) meaning, test-case table, Issue 2 closed | — |
 | 06/10/2026 | `meka_formulation_AFEM8.for` (new), `main_UD_inc8.for` (new) | Created AFEM8: ported overshoot logic from `logic-2d.for`, added `PNEWDT`, double `calcDcr` call, interpenetration clamp | AFEM7 archived |
@@ -532,30 +539,3 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 | 06/10/2026 | `meka_formulation_AFEM8.for` | `STATEV(24)` (Dcr normal) uncommented and updated to `Dcr(J_FAIL,J_FAIL)` | Correct SDV output |
 | 06/10/2026 | `plus11_iso.inp`, `tension22_iso.inp`, `simpshear12_iso.inp`, `pureshear12_iso.inp` | `*Depvar` increased from 25 to 26 | Matches new STATEV layout |
 | 02/17/2026 | `meka_formulation_AFEM7.for` | Fixed `Leff = 1.0*L` (was commented out → Leff=0 → infinite softening slope → stress plateau). Fixed `*Depvar 12→25`. Removed dead STATEV reads. | Stress now softens in 11-tension |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
