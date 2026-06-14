@@ -1,8 +1,9 @@
 # AFEM3D — ABAQUS UMAT: Incremental Smeared Crack Approach
 
-> **Active formulation:** `meka_formulation_AFEM8.for`  
-> **Entry point:** `main_UD_inc8.for`  
-> **Last reviewed:** 06/12/2026  
+> **Active formulation:** `meka_formulation_AFEM9.for` *(three simultaneous Mode-I cracks)*  
+> **Entry point:** `main_UD_inc9.for`  
+> **Previous active:** `meka_formulation_AFEM8.for` / `main_UD_inc8.for` *(single crack, Mode-I + Mode-II)*  
+> **Last reviewed:** 06/13/2026  
 > **Contact:** meka1@purdue.edu
 
 ---
@@ -35,7 +36,8 @@ This project implements **incremental progressive damage** for isotropic materia
 
 | File | Description | Status |
 |---|---|---|
-| `main_UD_inc8.for` | **ACTIVE.** UMAT wrapper for AFEM8. Passes `PNEWDT` for overshoot cutbacks. | Active |
+| `main_UD_inc9.for` | **ACTIVE.** UMAT wrapper for AFEM9 (three simultaneous Mode-I cracks). | Active |
+| `main_UD_inc8.for` | UMAT wrapper for AFEM8. Passes `PNEWDT` for overshoot cutbacks. | Archived |
 | `main_UD_inc.for` | UMAT wrapper for AFEM7 (no `PNEWDT`). | Archived |
 | `main_UD_tot.for` | UMAT wrapper for AFEM5 (total-strain form). | Archived |
 | `main_UD_elas.for` | Elasticity-only UMAT (no damage). | Archived |
@@ -44,7 +46,8 @@ This project implements **incremental progressive damage** for isotropic materia
 
 | File | Description | Status | Last Debugged |
 |---|---|---|---|
-| `meka_formulation_AFEM8.for` | **ACTIVE.** AFEM7 + PNEWDT overshoot, unified `calcDcr(MODE,...)`, Max Normal Stress criterion (coord-aligned, no SPRIND), Mode-II shear TSL, interpenetration clamp, near-singular guards | Active | 06/12/2026 |
+| `meka_formulation_AFEM9.for` | **ACTIVE.** AFEM8 + three simultaneous coord-aligned Mode-I cracks. N matrix 6×9, Dcr 9×9, system matrix Y 9×9 (matrixInverse). Per-crack flags. Inactive cracks locked via HUGE_PENALTY. PNEWDT overshoot control. | Active | 06/13/2026 |
+| `meka_formulation_AFEM8.for` | AFEM7 + PNEWDT overshoot, unified `calcDcr(MODE,...)`, Max Normal Stress criterion (coord-aligned, no SPRIND), Mode-II shear TSL, interpenetration clamp, near-singular guards | Archived | 06/12/2026 |
 | `meka_formulation_AFEM7.for` | Incremental SCA, unloading/reloading, Bazant regularization. No overshoot detection. | Archived | 02/17/2026 |
 | `meka_formulation_AFEM6.for` | Incremental SCA with global (not local) overshoot cutback | Archived | 11/12/2025 |
 | `meka_formulation_AFEM5.for` | Incremental SCA, fixed crack, multiple criteria, full Jacobian | Archived | 01/29/2026 |
@@ -231,14 +234,25 @@ The same Woodbury-identity formula applies for both modes:
 `Dcr` is mode-dependent:
 
 ```
-  MODE-I  Dcr:                      MODE-II  Dcr:
-  ┌──────────────────────┐          ┌──────────────────────┐
-  │ TSL(Ecr_n)  0    0   │          │ 1000·E    0       0  │  ← penalty (blocks opening)
-  │    0      ε_shear 0  │          │    0    TSL(|Ecr_s|) 0│  ← mode-II TSL
-  │    0        0   ε_sh │          │    0      0    tiny  │
-  └──────────────────────┘          └──────────────────────┘
-   ε_shear = Dcr(1,1)·term·1e-5       tiny = Dcr(2,2)·term·1e-5
+  MODE-I  Dcr:                        MODE-II  Dcr:
+  ┌──────────────────────────────┐    ┌──────────────────────────────┐
+  │ TSL(Ecr_n)    0         0    │    │ 1000·E      0          0     │
+  │    0      1000·G        0    │    │    0    TSL(|Ecr_s|)   0     │
+  │    0          0     1000·G   │    │    0        0          0     │
+  └──────────────────────────────┘    └──────────────────────────────┘
+  Dcr(1,1): Mode-I TSL, opening      Dcr(1,1): penalty — blocks normal opening
+  Dcr(2,2): 1000·G penalty —         Dcr(2,2): Mode-II TSL, sliding softens
+    Mode-I crack CANNOT slide.       Dcr(3,3): 0 — no secondary shear coupling
+  Dcr(3,3): same, secondary tangent  G = E/(2(1+ν))
 ```
+
+**Why the Mode-I shear penalty is mandatory:** With `Dcr(2,2) = 0`, the Woodbury identity gives:
+
+```
+  Y(2,2) = 0 + G  →  A(4,4) = G²/G = G  →  Dcocr(4,4) = G − G = 0
+```
+
+Zero shear stiffness after cracking means any numerical perturbation causes the element to shear freely — producing the observed element tilting. Setting `Dcr(2,2) = Dcr(3,3) = 1000·G` gives `Y(2,2) ≈ 1000·G`, so `A(4,4) = G²/(1001·G) ≈ G/1001 ≈ 0`, and `Dcocr(4,4) ≈ G` — full shear stiffness is retained. The penalty does NOT affect the tensile stress-strain curve because for pure tension `DSTRAN(4) = DSTRAN(5) = 0` and the shear dEcr terms remain zero regardless of `Dcr(2,2)`.
 
 ---
 
@@ -334,7 +348,43 @@ When the elastic trial stress overshoots the failure surface by more than 5%, th
 
 ## 4. State Variables and Properties
 
-### State Variables (NSTATV = 26)
+### AFEM9 State Variables (NSTATV = 35)
+
+*Three simultaneous Mode-I cracks, coord-aligned (T = I₃ always).*
+
+| Slot | Variable | Description |
+|---|---|---|
+| 1 | `isCRACKED` | 0 = fully intact, 1 = at least one crack active |
+| 2–4 | `crack_flag(3)` | Per-crack initiation flags: `crack_flag(i)` ∈ {0, 1} |
+| 5 | `L` | Characteristic length `CELENT` |
+| 6–14 | `Ecr_MAX(9)` | Max crack strain reached (9 components) |
+| 15–23 | `Ecr(9)` | Current crack strain (9 components) |
+| 24–32 | `dEcr(9)` | Crack strain increment this step |
+| 33–35 | `scr(3)` | Normal traction at each crack (post-processing) |
+
+Crack-strain index convention: for crack *i* (1, 2, 3):
+`Ecr(3i−2)` = normal opening, `Ecr(3i−1)` = shear-1, `Ecr(3i)` = shear-2.
+
+### AFEM9 Material Properties (NPROPS = 4 or 5)
+
+| Slot | Symbol | Description |
+|---|---|---|
+| 1 | `E` | Young's modulus |
+| 2 | `ν` | Poisson's ratio |
+| 3 | `GIc` | Mode-I fracture energy (same for all three cracks) |
+| 4 | `XT` | Tensile strength (Mode-I peak, same for all three cracks) |
+| 5 | `INDEX` | 0 = Max Normal Stress on coord. axes [default if omitted] |
+
+```
+*Depvar
+     35,
+*User Material, constants=4
+E,  nu,  GIc,  XT
+```
+
+---
+
+### AFEM8 State Variables (NSTATV = 26)
 
 | Slot | Variable | Description |
 |---|---|---|
@@ -414,15 +464,28 @@ All test cubes are unit cubes (1×1×1 m) with a single C3D8 element. Material: 
 
 ## 6. Known Issues and Bugs
 
-### Issue 1 — Spurious twisting / convergence failure at tail end of softening
+### Issue 1 — Element tilting / zero shear stiffness after Mode-I cracking [RESOLVED 06/12/2026]
 
-**Symptom:** Near complete failure (Ecr_n → Ecr_n_ult), the simulation becomes unstable. The element develops spurious off-axis stresses and the job aborts.
+**Symptom (observed):** After the peak stress is reached in uniaxial tension (T-11, T-22, T-33), the element tilts instead of softening cleanly. Spurious off-axis stresses develop.
 
-**Root cause:** When `Dcr(J_FAIL,J_FAIL) → RES_K = 1e-8` (residual), the off-diagonal shear stiffness is set to `Dcr(j,j) = RES_K × term × 1e-5 ≈ 0`. At near-zero `Dcr`, the Woodbury formula gives `Dcocr ≈ Dco - Dco·N·(Nᵀ·Dco·N)⁻¹·Nᵀ·Dco`, which removes the stress component along the crack normal but retains full off-diagonal coupling. The residual terms drive spurious shear stresses that the implicit solver cannot resolve, causing hourglass-type twisting.
+**Root cause:** With `Dcr(2,2) = Dcr(3,3) = 0`, the Woodbury identity immediately zeros the shear stiffness in `Dcocr`:
 
-**Proposed fix:** After reaching complete failure (`Ecr_n > Ecr_n_ult`), zero out the rows and columns of `Dcocr` associated with all directions coupled by N, rather than relying on near-zero `Dcr` to do it numerically.
+```
+  Y(2,2) = Dcr(2,2) + G = 0 + G = G
+  A(4,4) = G² / G = G
+  Dcocr(4,4) = G − G = 0   ← element has zero shear stiffness after cracking
+```
 
-**Status:** Deferred. Will address after shear tests are validated.
+Any numerical perturbation then drives free shear rotation (tilting).
+
+**Fix (06/12/2026):** Added shear-locked penalty to Mode-I `Dcr`:
+
+```fortran
+Dcr(2,2) = PENALTY_FAC * G_local   ! G_local = E/(2(1+ν))
+Dcr(3,3) = PENALTY_FAC * G_local
+```
+
+This is physically correct: a Mode-I crack OPENS but does NOT SLIDE (it is shear-locked). The penalty prevents sliding, exactly as `Dcr(1,1) = PENALTY*E` prevents normal opening for Mode-II. The penalty does not affect the tensile stress-strain curve because for pure tension DSTRAN(shear) = 0, so dEcr(2) = 0 regardless of Dcr(2,2).
 
 ---
 
@@ -502,10 +565,97 @@ IF (ABS(detY) .LT. SING_TOL*(ABS(Y(1,1))*ABS(Y(2,2))*ABS(Y(3,3)) + 1.0D0)) THEN
 
 ---
 
+### Known Issues — AFEM9 (identified 06/14/2026 from DCB simulation)
+
+AFEM9 was tested against the first-failing element of a DCB (Double-Cantilever Beam) simulation and compared with the reference `misesAndSmearedCrack.for` (Haotian SCA). Five physically wrong behaviours were observed. All five share the same root cause.
+
+**Root cause — Poisson (λ) coupling through N^T·Dco·N**
+
+In the 9×9 system matrix `Y = Dcr + N^T·Dco·N`, the Lamé constant λ creates off-diagonal entries that couple all three crack-normal directions simultaneously:
+
+```
+  Y(1,4) = λ   ← couples crack-1 normal (ε₁₁) with crack-2 normal (ε₂₂)
+  Y(1,7) = λ   ← couples crack-1 normal with crack-3 normal (ε₃₃)
+  Y(4,7) = λ
+```
+
+Solving `dEcr = inv(Y) · (N^T·Dco·DSTRAN)` redistributes crack strain across all three normal directions for any single-axis loading. In the DCB, only the peel direction (y) is loaded, but through λ the solver also drives crack opening in x and z — which are not loaded and should remain unchanged. AFEM8 avoids this by having only one active crack at a time in a properly-oriented 3×3 Y that has no Poisson cross-coupling at the crack-normal index.
+
+**Data summary (200 increments of DCB loading)**
+
+| Component | AFEM9 result | Reference (Haotian SCA) | Verdict |
+|---|---|---|---|
+| S11 peak | ~18.4 MPa | ~11.3 MPa | Different |
+| S11 post-failure | **−16.3 MPa and growing** | ~0 (machine-epsilon) | **WRONG** |
+| S22 peak | ~19.5 MPa | ~20.0 MPa | Similar |
+| S22 residual | **−0.488 MPa (locked constant)** | ~0 (machine-epsilon) | **WRONG** |
+| S33 | **grows to −280 MPa** | < 1.7 MPa, returns to ~0 | **WRONG** |
+| S12 | ≈ machine-epsilon | ≈ machine-epsilon | Correct |
+| S13 | **grows to +0.83 MPa** | ≈ machine-epsilon after failure | **WRONG** |
+| S23 | ≈ machine-epsilon | ≈ machine-epsilon | Correct |
+
+---
+
+**AFEM9 — Bug A: S11 sign inversion (spurious compressive stress in Mode-I direction)**
+
+- **Symptom:** S11 plateaus near 18.4 MPa for ~60 increments after crack-1 initiates, then drops and goes deeply negative, reaching −16.3 MPa while the DCB continues to open.
+- **Expected:** S11 softens to XT × R_RES ≈ 0 and stays non-negative. A Mode-I crack cannot carry compression.
+- **Root cause (two combined effects):**
+  1. In the DCB, DSTRAN is dominated by the peel (y) component. The driving term for crack-1 is `(N^T·Dco·DSTRAN)(1) = λ·DSTRAN(2)`, which is small (only Poisson coupling, not direct x-loading). So `dEcr(1) ≈ 0` each increment and crack-1 barely softens despite having initiated.
+  2. Once crack-2 opens substantially, the off-diagonal Y(1,4) = λ drives `dEcr(1)` negative every increment. The interpenetration clamp prevents Ecr(1) < 0, but the Woodbury-condensed Dcocr still produces a negative S11 contribution each step via `SIG(1) += Dcocr(1,2)·DSTRAN(2)`, which accumulates without bound.
+
+---
+
+**AFEM9 — Bug B: S33 grows unboundedly to −280 MPa**
+
+- **Symptom:** S33 starts at ~2.2 MPa (Poisson-driven), reverses sign at step 10, and grows monotonically to −280 MPa. E33 stays small (< 0.003), implying an apparent z-stiffness of ~100 GPa is still active — the element never loses z-stiffness through any cracking mechanism.
+- **Expected:** S33 should remain small, bounded, and return to near-zero after the peel crack fully softens.
+- **Root cause:** Crack-3 (z-normal) is inactive throughout (Dcr(7,7) = HUGE_PENALTY × E). Because Y(7,7) = 1e6·E >> off-diagonals, invY(7,7) ≈ 0 and crack-3's own crack strain stays near zero — correct so far. However, the Woodbury correction term A66(3,3) = (Dco·N·invY·N^T·Dco)(3,3) also receives contributions through invY entries coupling index 7 with active indices 1 and 4 via λ. These are not zero. Combined with a Poisson-driven compressive DSTRAN(3) from the large peel loading, `SIG(3) += Dcocr(3,3)·DSTRAN(3)` accumulates a compressive increment every step, growing without physical dissipation because crack-3 never opens.
+
+---
+
+**AFEM9 — Bug C: S22 residual locked at −0.488 MPa instead of ~0**
+
+- **Symptom:** After crack-2 reaches complete failure (Ecr(4) > Ecr_n_ult), S22 freezes at exactly −0.488 MPa and remains there for the rest of the simulation (~100 increments) rather than softening to XT × R_RES ≈ 0. E22 continues growing to 3.47 while S22 stays at this negative offset.
+- **Expected:** S22 residual ≈ XT × R_RES ≈ 0.
+- **Root cause:** Once Dcr(4,4) = RES_K, the Woodbury formula correctly drives Dcocr(2,2) ≈ 0 in the y-normal direction. However, the off-diagonal Dcocr(2,1) remains non-zero due to λ coupling with x. Each increment, `SIG(2) += Dcocr(2,1)·DSTRAN(1)` adds a small negative contribution (since x-direction is now under compressive stress from Bug A). These accumulate to the −0.488 MPa offset and then stabilise when the compressive x-stress also stabilises.
+
+---
+
+**AFEM9 — Bug D: S13 grows monotonically to +0.83 MPa (spurious shear)**
+
+- **Symptom:** S13 grows steadily from 0 to +0.83 MPa over 200 increments. In a symmetric DCB loaded in Mode-I peel, S13 should be zero or machine-epsilon throughout.
+- **Expected:** S13 ≈ 0 at all times.
+- **Root cause:** The N matrix entries N(5,3) = 1 and N(5,8) = 1 mean that γ₁₃ receives contributions from both crack-1's secondary shear (Ecr(3)) and crack-3's primary shear (Ecr(8)). The PENALTY_FAC × G stiffness on these shear components, when condensed through the Woodbury formula alongside the active crack-2 coupling, produces a small but consistently signed S13 increment each step from the coupling term `Dcocr(5,2)·DSTRAN(2)`.
+
+---
+
+**AFEM9 — Bug E: Crack-1 softening suppressed (plateau at S11 ≈ 18.4 MPa)**
+
+- **Symptom:** After crack-1 initiates, S11 stays nearly constant at ~18.4 MPa for approximately 60 increments before abruptly dropping. The softening slope is absent for the plateau phase.
+- **Expected:** S11 should begin following the TSL slope immediately after initiation.
+- **Root cause:** This is the slow-crack-opening mechanism from Bug A. Because `(N^T·Dco·DSTRAN)(1) ≈ λ·DSTRAN(2)` is small for a DCB (y-peel dominated), `dEcr(1)` per increment is negligible. Crack-1 barely opens. Meanwhile, `SIG(1) += Dcocr(1,1)·DSTRAN(1) + Dcocr(1,2)·DSTRAN(2) + ...` accumulates S11 from Poisson of y-loading faster than the negligible crack softening can reduce it. The plateau ends only when crack-2 opens far enough that the Y(1,4) coupling forces a sudden large `dEcr(1)` — at which point S11 drops rapidly and reverses sign.
+
+---
+
+**Proposed fix direction for AFEM9**
+
+The coordinate-aligned 3-crack simultaneous formulation cannot avoid the λ coupling in N^T·Dco·N. The recommended approach is to decouple the three cracks from the shared solve:
+
+1. After a crack fully fails (Dcr(i,i) → RES_K), zero its row and column contribution to the 9×9 right-hand side so it cannot drive the remaining active cracks through λ.
+2. Alternatively, use a stress-return approach per crack direction (check each normal direction independently using the elastic trial stress, then apply softening only in that direction) to avoid the cross-coupling entirely.
+3. As a short-term patch: clamp SIG(i) ≥ 0 for any crack-normal direction i where crack_flag(i) = 1 (interpenetration of stress, not just strain), to at least prevent unphysical compressive traction from accumulating.
+
+---
+
 ## 7. Debug Log
 
 | Date | File(s) Changed | Change | Effect |
 |---|---|---|---|
+| 06/14/2026 | `meka_formulation_AFEM9.for` | Fix-1: after Step-0, zero N69 columns for unformed cracks so HUGE_PENALTY Dcr entries do not enter the Woodbury solve through Poisson λ off-diagonals; recompute NT96/NT_Dco from masked N69. Fix-2: after Step-I stress update, clamp SIG(I) ≥ 0 for each active crack. Targets Bugs A–D. Bug E (crack-1 softening suppressed by direction) not yet fixed — requires per-crack independent stress return. | Bugs A–D targeted; Bug E still open. |
+| 06/14/2026 | `README.MD` | DCB simulation analysis: compared AFEM9 first-element stress-strain against Haotian SCA reference. Identified 5 bugs (A–E in §6 Known Issues — AFEM9): S11 sign inversion, S33 growing to −280 MPa, S22 residual −0.488 MPa, spurious S13 growth, crack-1 softening suppressed. Root cause: Poisson (λ) off-diagonal coupling in the 9×9 Y matrix redistributes crack strain to non-loaded directions. No code changed; fixes documented. | All 5 bugs open. |
+| 06/13/2026 | `meka_formulation_AFEM9.for`, `main_UD_inc9.for`, `README.MD` | Created AFEM9: three simultaneous coord-aligned Mode-I cracks. N matrix 6×9 (hardcoded for T=I₃), Dcr 9×9 diagonal, system matrix Y 9×9 inverted via `matrixInverse`. Per-crack initiation flags; inactive cracks locked with HUGE_PENALTY×E. Same incremental solve and PNEWDT overshoot logic as AFEM8. NSTATV=35. | First version, not yet tested against test cases. |
+| 06/12/2026 | `meka_formulation_AFEM8.for`, `README.MD` | Fixed Issue 1 (element tilting in tension): added shear-locked penalty `Dcr(2,2)=Dcr(3,3)=PENALTY_FAC*G` to Mode-I branch of `calcDcr`. Root cause: Dcr(2,2)=0 drove Dcocr(shear)=0 via Woodbury, causing free shear rotation. Mode-II untouched. | Resolved Issue 1 (tilting). Bugs 2, 4, 5 remain open. |
 | 06/12/2026 | `meka_formulation_AFEM8.for`, `README.MD` | Refactor: replaced SPRIND principal-stress criterion (Mode-I) with Max Normal Stress on coordinate axes. Unified `calcDcr_ModeI` + `calcDcr_ModeII` into single `calcDcr(MODE,...)`. J_FAIL=1 always for Mode-I. Fixed Bug 1 (BL_II label E→G), Bug 3 (Mode-II alpha numerator ABS(Ecr) not Ecr_MAX), Bug 6 (Dcr(3,3)=0). Corrected expected failure displacement from 0.03→0.02 m. | Bugs 2, 4, 5 remain open. |
 | 06/12/2026 | `README.MD` | Code review of `meka_formulation_AFEM8.for`. Identified 6 bugs (see §6): BL_II uses E not G; Step C no RETURN after PNEWDT; Mode-II alpha uses Ecr_MAX not ABS(Ecr); STATEV(3,4) unused; near-singular guard too loose for Mode-II; Dcr(3,3) secondary shear unjustified. No code changed. | Bugs documented; fixes deferred pending shear test results. |
 | 06/11/2026 | `meka_formulation_AFEM8.for` | Added Mode-II TSL: `calcDcr_ModeII`, mode-determination logic (FI_shear vs FI_mode1), coordinate-aligned crack frames for S12/S13/S23, STATEV(2)=MODE, J_FAIL=2 for Mode-II, Step C/D/E mode-branching, pre-peak Mode-II overshoot, G2c/XS PROPS with defaults, PENALTY Dcr(1,1)=1e3·E | Shear degradation now works; S12/S13/S23 reach zero at Ecr_s_ult |
