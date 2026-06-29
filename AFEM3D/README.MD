@@ -1,9 +1,11 @@
 # AFEM3D — ABAQUS UMAT: Incremental Smeared Crack Approach
 
-> **Active formulation:** `meka_formulation_AFEM9.for` *(three simultaneous Mode-I cracks)*  
-> **Entry point:** `main_UD_inc9.for`  
-> **Previous active:** `meka_formulation_AFEM8.for` / `main_UD_inc8.for` *(single crack, Mode-I + Mode-II)*  
-> **Last reviewed:** 06/13/2026  
+> **Active formulation (isotropic):** `meka_formulation_AFEM11.for` *(three independent Mode-I cracks, decoupled 3×3 solves)*  
+> **Entry point (isotropic):** `main_UD_inc11.for`  
+> **Active formulation (orthotropic):** `meka_formulation_AFEM10.for` *(single crack, Mode-I + Mode-II)*  
+> **Entry point (orthotropic):** `main_UD_inc10.for`  
+> **Previous isotropic active:** `meka_formulation_AFEM9.for` / `main_UD_inc9.for` *(archived — coupled 9×9 system, Bugs A–E)*  
+> **Last reviewed:** 06/28/2026  
 > **Contact:** meka1@purdue.edu
 
 ---
@@ -36,7 +38,9 @@ This project implements **incremental progressive damage** for isotropic materia
 
 | File | Description | Status |
 |---|---|---|
-| `main_UD_inc9.for` | **ACTIVE.** UMAT wrapper for AFEM9 (three simultaneous Mode-I cracks). | Active |
+| `main_UD_inc11.for` | **ACTIVE (isotropic).** UMAT wrapper for AFEM11 (three independent Mode-I cracks, decoupled). | Active |
+| `main_UD_inc10.for` | **ACTIVE (orthotropic).** UMAT wrapper for AFEM10 (single crack, Mode-I + Mode-II). | Active |
+| `main_UD_inc9.for` | UMAT wrapper for AFEM9 (three simultaneous Mode-I cracks — Bugs A–E, archived). | Archived |
 | `main_UD_inc8.for` | UMAT wrapper for AFEM8. Passes `PNEWDT` for overshoot cutbacks. | Archived |
 | `main_UD_inc.for` | UMAT wrapper for AFEM7 (no `PNEWDT`). | Archived |
 | `main_UD_tot.for` | UMAT wrapper for AFEM5 (total-strain form). | Archived |
@@ -46,7 +50,8 @@ This project implements **incremental progressive damage** for isotropic materia
 
 | File | Description | Status | Last Debugged |
 |---|---|---|---|
-| `meka_formulation_AFEM9.for` | **ACTIVE.** AFEM8 + three simultaneous coord-aligned Mode-I cracks. N matrix 6×9, Dcr 9×9, system matrix Y 9×9 (matrixInverse). Per-crack flags. Inactive cracks locked via HUGE_PENALTY. PNEWDT overshoot control. | Active | 06/13/2026 |
+| `meka_formulation_AFEM11.for` | **ACTIVE.** Three INDEPENDENT coord-aligned Mode-I cracks. Each crack (x/y/z-normal) initiates when its own S_ii ≥ XT. Three separate 3×3 solves — no Poisson or shear cross-coupling. Shear-locked PENALTY_FAC=1e6. Combined Woodbury: Dcocr = Dco − ΣᵢAᵢ. NSTATV=26, NPROPS=4. | Active | 06/28/2026 |
+| `meka_formulation_AFEM9.for` | Three simultaneous coord-aligned Mode-I cracks. S22 triggers all 3 simultaneously. 9×9 coupled system — Bugs A–E (Poisson λ and shared-shear cross-coupling). **Archived; replaced by AFEM11.** | Archived | 06/15/2026 |
 | `meka_formulation_AFEM8.for` | AFEM7 + PNEWDT overshoot, unified `calcDcr(MODE,...)`, Max Normal Stress criterion (coord-aligned, no SPRIND), Mode-II shear TSL, interpenetration clamp, near-singular guards | Archived | 06/12/2026 |
 | `meka_formulation_AFEM7.for` | Incremental SCA, unloading/reloading, Bazant regularization. No overshoot detection. | Archived | 02/17/2026 |
 | `meka_formulation_AFEM6.for` | Incremental SCA with global (not local) overshoot cutback | Archived | 11/12/2025 |
@@ -348,36 +353,67 @@ When the elastic trial stress overshoots the failure surface by more than 5%, th
 
 ## 4. State Variables and Properties
 
-### AFEM9 State Variables (NSTATV = 35)
+### AFEM11 State Variables (NSTATV = 26)
 
-*Three simultaneous Mode-I cracks, coord-aligned (T = I₃ always).*
+*Three independent Mode-I cracks, coord-aligned. Each activates independently when its own normal stress ≥ XT.*
 
 | Slot | Variable | Description |
 |---|---|---|
-| 1 | `isCRACKED` | 0 = fully intact, 1 = at least one crack active |
-| 2–4 | `crack_flag(3)` | Per-crack initiation flags: `crack_flag(i)` ∈ {0, 1} |
-| 5 | `L` | Characteristic length `CELENT` |
-| 6–14 | `Ecr_MAX(9)` | Max crack strain reached (9 components) |
-| 15–23 | `Ecr(9)` | Current crack strain (9 components) |
-| 24–32 | `dEcr(9)` | Crack strain increment this step |
-| 33–35 | `scr(3)` | Normal traction at each crack (post-processing) |
+| 1 | `crack_flag(1)` | Crack 1, x-normal: 0 = intact, 1 = cracked |
+| 2 | `crack_flag(2)` | Crack 2, y-normal |
+| 3 | `crack_flag(3)` | Crack 3, z-normal |
+| 4 | `L` | Characteristic length `CELENT` (set at first initiation) |
+| 5–7 | `Ecr_MAX(3)` | Peak normal crack strain per crack |
+| 8–10 | `Ecr(crack 1)` | Crack 1 strain: `[normal, shear1, shear2]` |
+| 11–13 | `Ecr(crack 2)` | Crack 2 strain |
+| 14–16 | `Ecr(crack 3)` | Crack 3 strain |
+| 17–19 | `scr_n(3)` | Crack normal traction per crack (post-processing) |
+| 20–22 | `dEcr_n(3)` | Normal crack strain increment this step (post-processing) |
+| 23–26 | *(spare)* | Available for future use |
 
-Crack-strain index convention: for crack *i* (1, 2, 3):
-`Ecr(3i−2)` = normal opening, `Ecr(3i−1)` = shear-1, `Ecr(3i)` = shear-2.
-
-### AFEM9 Material Properties (NPROPS = 4 or 5)
+### AFEM11 Material Properties (NPROPS = 4)
 
 | Slot | Symbol | Description |
 |---|---|---|
 | 1 | `E` | Young's modulus |
 | 2 | `ν` | Poisson's ratio |
 | 3 | `GIc` | Mode-I fracture energy (same for all three cracks) |
-| 4 | `XT` | Tensile strength (Mode-I peak, same for all three cracks) |
-| 5 | `INDEX` | 0 = Max Normal Stress on coord. axes [default if omitted] |
+| 4 | `XT` | Tensile strength (Mode-I peak) |
 
 ```
 *Depvar
-     35,
+     26,
+*User Material, constants=4
+E,  nu,  GIc,  XT
+```
+
+---
+
+### AFEM9 State Variables (NSTATV = 26)
+
+*Archived. Three simultaneous Mode-I cracks (all activate when S22 ≥ XT). 9×9 coupled system — Bugs A–E.*
+
+| Slot | Variable | Description |
+|---|---|---|
+| 1 | `isCRACKED` | 0 = fully intact, 1 = cracked |
+| 2 | `L` | Characteristic length `CELENT` |
+| 3–5 | `Ecr_MAX_n(3)` | Peak normal crack strain per direction |
+| 6–14 | `Ecr(9)` | Current crack strain vector (9 components) |
+| 15–23 | `dEcr(9)` | Crack strain increment this step |
+| 24–26 | `scr(3)` | Normal traction at each crack (post-processing) |
+
+### AFEM9 Material Properties (NPROPS = 4)
+
+| Slot | Symbol | Description |
+|---|---|---|
+| 1 | `E` | Young's modulus |
+| 2 | `ν` | Poisson's ratio |
+| 3 | `GIc` | Mode-I fracture energy (same for all three cracks) |
+| 4 | `XT` | Tensile strength (Mode-I peak) |
+
+```
+*Depvar
+     26,
 *User Material, constants=4
 E,  nu,  GIc,  XT
 ```
@@ -567,6 +603,8 @@ IF (ABS(detY) .LT. SING_TOL*(ABS(Y(1,1))*ABS(Y(2,2))*ABS(Y(3,3)) + 1.0D0)) THEN
 
 ### Known Issues — AFEM9 (identified 06/14/2026 from DCB simulation)
 
+> **Note (06/15/2026):** The AFEM9 formulation was redesigned to address all five bugs below. The redesign follows `qcalcDcr` from `misesAndSmearedCrack.for` and removes the per-crack flag system, HUGE_PENALTY, and PENALTY_FAC. See the 06/15/2026 debug log entry for details.
+
 AFEM9 was tested against the first-failing element of a DCB (Double-Cantilever Beam) simulation and compared with the reference `misesAndSmearedCrack.for` (Haotian SCA). Five physically wrong behaviours were observed. All five share the same root cause.
 
 **Root cause — Poisson (λ) coupling through N^T·Dco·N**
@@ -652,6 +690,9 @@ The coordinate-aligned 3-crack simultaneous formulation cannot avoid the λ coup
 
 | Date | File(s) Changed | Change | Effect |
 |---|---|---|---|
+| 06/28/2026 | `meka_formulation_AFEM11.for` (new), `main_UD_inc11.for` (new), `README.MD` | **Root-cause fix for all AFEM9 Bugs A–E.** Complete rewrite as three INDEPENDENT 3×3 crack solves following AFEM10 logic. Two coupling sources eliminated: (1) Poisson λ normal-normal coupling in 9×9 Y removed by decoupling; (2) shared-shear Voigt-index double-counting (Dcocr(γ₁₂) = G−G−G = −G) prevented by shear-locked PENALTY_FAC=1e6 per crack. Each crack initiates independently when its own S_ii ≥ XT. For coord-aligned cracks in isotropic material N_i^T·Dco·N_i is diagonal so Y_i is diagonal — no cross-coupling. Combined Woodbury: Dcocr = Dco − Σᵢ Aᵢ. NSTATV=26 (new layout), NPROPS=4 (unchanged). AFEM9 archived. | Eliminates spurious S11 sign inversion, S33 growth to −280 MPa, S22 residual lock, S13 growth, and suppressed crack-1 softening (Bugs A–E). Each axis should now show independent linear softening XT→0 with area = GIc/Leff. Pending test verification. |
+| 06/15/2026 | `meka_formulation_AFEM9.for` | **Root-cause fix for missing stress degradation in Y-tension test.** Three bugs compounded: (1) `T(3,:) = (1,0,1)` was not a unit vector → corrupted N matrix entries; fixed to `(0,0,1)`. (2) `Ecr_MAX_n` initialized to `ECR_INIT = 1e-14` at onset → secant Dcr ≈ 2e21 MPa → `inv(Y99) ≈ 0` → `dEcr ≈ 0` each step → no crack opening. Fixed to `XT/E`. (3) Even with (1)+(2) fixed, a final algorithmic error remained: the original RHS `NT_Dco·DSTRAN` gives tiny `dEcr` (DSTRAN is a small increment) so the elastic increment stays positive and SIG keeps rising. Switching to `NT_Dco·EPS_total` overshot (abrupt drop to 0). **Final fix:** replace Step A/B with a tangent-Dcr solve: `Dcr_tan(ni,ni) = slope_soft` (the TSL slope) and RHS = `NT_Dco·DSTRAN`. For linear softening this is exact — the single linear solve gives the TSL-consistent crack-strain increment at every step with no Newton iteration needed. Added subroutine `calcDcr9_tan`. Step F/G (Woodbury) keep the secant Dcr for ABAQUS Newton stability. | S22 now softens linearly from XT to 0, with fracture strain matching Ecr_n_ult. Pending tensile-Y run to confirm. |
+| 06/15/2026 | `meka_formulation_AFEM9.for`, `main_UD_inc9.for`, `README.MD` | Full redesign of AFEM9 to match `qcalcDcr` from `misesAndSmearedCrack.for` (Haotian SCA). Changes: (1) Failure trigger simplified to S22 > XT only (peel criterion). (2) All 3 cracks activate simultaneously — removed per-crack `crack_flag(3)` system. (3) New `calcDcr9`: secant TSL per normal, `Dcr_min = min(Dcr(1,1), Dcr(4,4), Dcr(7,7))` applied to all normals, shear = Dcr_min·term·1e-5 (muted). `sigcr0_r = XT·5e-10`. (4) Removed HUGE_PENALTY, PENALTY_FAC, Step-0 new-crack check, Fix-1 N masking. (5) Kept stress clamp SIG(1:3) ≥ 0 (Fix-2). (6) NSTATV reduced from 35 to 26 (no crack_flag, Ecr_MAX_n tracks 3 normals only). ABAQUS `.inp` files must be updated to `*Depvar 26`. | Addresses root cause of Bugs A–E by removing HUGE_PENALTY Poisson coupling and independently-driving each crack via Dcr_min. Pending DCB re-test. |
 | 06/14/2026 | `meka_formulation_AFEM9.for` | Fix-1: after Step-0, zero N69 columns for unformed cracks so HUGE_PENALTY Dcr entries do not enter the Woodbury solve through Poisson λ off-diagonals; recompute NT96/NT_Dco from masked N69. Fix-2: after Step-I stress update, clamp SIG(I) ≥ 0 for each active crack. Targets Bugs A–D. Bug E (crack-1 softening suppressed by direction) not yet fixed — requires per-crack independent stress return. | Bugs A–D targeted; Bug E still open. |
 | 06/14/2026 | `README.MD` | DCB simulation analysis: compared AFEM9 first-element stress-strain against Haotian SCA reference. Identified 5 bugs (A–E in §6 Known Issues — AFEM9): S11 sign inversion, S33 growing to −280 MPa, S22 residual −0.488 MPa, spurious S13 growth, crack-1 softening suppressed. Root cause: Poisson (λ) off-diagonal coupling in the 9×9 Y matrix redistributes crack strain to non-loaded directions. No code changed; fixes documented. | All 5 bugs open. |
 | 06/13/2026 | `meka_formulation_AFEM9.for`, `main_UD_inc9.for`, `README.MD` | Created AFEM9: three simultaneous coord-aligned Mode-I cracks. N matrix 6×9 (hardcoded for T=I₃), Dcr 9×9 diagonal, system matrix Y 9×9 inverted via `matrixInverse`. Per-crack initiation flags; inactive cracks locked with HUGE_PENALTY×E. Same incremental solve and PNEWDT overshoot logic as AFEM8. NSTATV=35. | First version, not yet tested against test cases. |
